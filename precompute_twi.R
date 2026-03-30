@@ -57,16 +57,23 @@ writeRaster(dem_ws, dem_clip_f, overwrite = TRUE)
 # ── Step 2: Running WBT ─────────────────────────────────────────────────
 message("Breaching depressions ...")
 wbt_breach_depressions_least_cost(
-  dem = dem_clip_f, output = breached_f, dist = 10, fill = TRUE
+  dem = dem_clip_f, 
+  output = breached_f, 
+  dist = 10, 
+  fill = TRUE
 )
 
 message("FD8 flow accumulation ...")
 wbt_fd8_flow_accumulation(
-  dem = breached_f, output = sca_f, out_type = "specific contributing area"
+  dem = breached_f, 
+  output = sca_f, 
+  out_type = "specific contributing area"
 )
 
 message("Computing slope ...")
-wbt_slope(dem = breached_f, output = slope_f, units = "degrees")
+wbt_slope(dem = breached_f, 
+          output = slope_f, 
+          units = "degrees")
 
 message("Computing TWI ...")
 
@@ -95,3 +102,15 @@ writeRaster(twi, OUT_F, overwrite = TRUE)
 
 message("Done! Saved to: ", OUT_F)
 message("You can now deploy to shinyapps.io without WhiteBox.")
+
+# ── Step 4: Create TOPIDX Function ─────────────────────────────────────────────
+# Function that turns TWI values into histogram-style classes for TOPMODEL's
+# topographic index look-up table (TOPIDX)
+make_topidx_classes <- function(twi_raster, n_classes = 16) {
+  vals <- values(twi_raster, na.rm = TRUE)[, 1]
+  brks <- seq(min(vals), max(vals), length.out = n_classes + 1)
+  mids <- (brks[-1] + brks[-length(brks)]) / 2
+  cnts <- hist(vals, breaks = brks, plot = FALSE)$counts
+  frac <- cnts / sum(cnts)
+  cbind(twi = mids, frac = frac)
+}
