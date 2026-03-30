@@ -17,13 +17,13 @@ wbt_init()
 
 # ── File paths ─────────────────────────────────────────────────────────────────
 # Input: 10-meter resolution DEM for the Hubbard Brook Watershed 3
-DEM_F <- "data/dem_10m.tif"
+DEM_F <- "Data/dem_10m.tif"
 
 # Input: watershed boundary polygon
-SHP_F <- "data/Watershed3HB.shp"
+SHP_F <- "Data/Watershed3HB.shp"
 
 # Output: final pre-computed TWI raster
-OUT_F <- "data/twi_precomputed.tif"
+OUT_F <- "Data/twi_precomputed.tif"
 
 # Temporary working directory for files produced by WBT
 TEMP_DIR <- file.path(tempdir(), "twi_precompute")
