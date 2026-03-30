@@ -1,7 +1,3 @@
-if (dir.exists("EDSEmailFolder")) {
-  setwd("EDSEmailFolder")
-}
-
 library(shiny)
 library(bslib)
 library(terra)
