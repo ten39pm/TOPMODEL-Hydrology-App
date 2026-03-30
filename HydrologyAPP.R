@@ -56,13 +56,13 @@ load_daily_data <- function() {
   flow$DATE <- as.Date(trimws(flow$DATE))
   flow <- flow[flow$WS == 3, c("DATE", "Streamflow")]
   names(flow) <- c("date", "flow_mm")
-
+  
   # Average min/max temperatures to get the daily mean
   temp <- read.csv(TEMP_F, stringsAsFactors = FALSE)
   temp$date <- as.Date(trimws(temp$date))
-  temp_avg <- temp %>%
-    group_by(date) %>%
-    summarise(tavg = mean(AVE, na.rm = TRUE), .groups = "drop")
+  temp_avg <- temp |> 
+    group_by(date) |> 
+    summarize(tavg = mean(AVE, na.rm = TRUE), .groups = "drop")
 
   # Inner join precip & flow and left join by temp_avg
   df <- merge(precip, flow, by = "date", all = FALSE)
@@ -144,6 +144,7 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
   # Pre-allocate output arrays
   Qsim <- numeric(n); Qb_out <- numeric(n); Qof_out <- numeric(n)
   SWE_out <- numeric(n); ET_out <- numeric(n); Sd_out <- numeric(n)
+  SF_out <- numeric(n)
 
   # ── Daily time step loop ───────────────────────────────────────────────────
   for (t in seq_len(n)) {
@@ -191,14 +192,14 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
 
     # Update watershed-average deficit
     Sd <- Sd - quz; if (Sd < 0) Sd <- 0
-
+    
     # Baseflow: exponential decay from transmissivity
     qb <- Te * exp(-Sd / m)
     if (qb > Sd + 50) qb <- Sd + 50; if (qb < 0) qb <- 0
     Sd <- Sd + qb; if (Sd < 0) Sd <- 0  # deficit increases as water leaves
 
-    Qb_out[t] <- qb
-    Qsim[t]   <- qb + qof  # total flow = baseflow + overland flow
+    Qb_out[t]  <- qb
+    Qsim[t]    <- qb + qof  # total flow = baseflow + overland flow
     Sd_out[t]  <- Sd
   }
 
@@ -213,8 +214,7 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
   o <- obs[idx]; s <- Qsim[idx]
   ok <- !is.na(o) & is.finite(s)
   
-  if (sum(ok) < 30) {
-    nse <- NA_real_
+  if (sum(ok) < 30) { nse <- NA_real_
   } else {
     ss_res <- sum((o[ok] - s[ok])^2)
     ss_tot <- sum((o[ok] - mean(o[ok]))^2)
@@ -222,17 +222,15 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
   }
 
   # Monthly mean deficit: drives the saturation map animation in the UI
-  months_vec <- format(data$date, "%Y-%m")
-  monthly_Sd <- tapply(Sd_out, months_vec, mean)
-  monthly_labels <- names(monthly_Sd)
+  # months_vec <- format(data$date, "%Y-%m")
+  # monthly_Sd <- tapply(Sd_out, months_vec, mean)
+  # monthly_labels <- names(monthly_Sd)
 
   list(Qsim = Qsim, Qobs = obs, Qb = Qb_out, Qof = Qof_out,
-       SWE = SWE_out, ET = ET_out, dates = data$date,
-       nse = nse, warmup = warmup,
-       final_Sd = Sd, m = m, lam = lam,
-       monthly_Sd = as.numeric(monthly_Sd),
-       monthly_labels = monthly_labels)
-}
+       SWE = SWE_out, ET = ET_out, Sd = Sd_out, SF = SF_out,
+       dates = data$date, nse = nse, warmup = warmup,
+       m = m, lam = lam)
+  }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3b.   LIGHTWEIGHT NSE-ONLY TOPMODEL (optimizer only — no arrays)
@@ -343,9 +341,7 @@ optimize_params <- function(data, topidx, cal_years = 3) {
   cal_days <- cal_years * 365 + 365
   if (n_full > cal_days) {
     cal_data <- data[(n_full - cal_days + 1):n_full, ]
-  } else {
-    cal_data <- data
-  }
+  } else { cal_data <- data }
 
   # Precompute vectors once & pass into each optim() call
   cal_n      <- nrow(cal_data)
@@ -373,15 +369,15 @@ optimize_params <- function(data, topidx, cal_years = 3) {
   best_val  <- Inf
   best_pars <- starts[[1]]
 
-  for (s in starts) {
+  for (i in seq_along(starts)) {
+    if (!is.null(progress_fn))
+      progress_fn(i, length(starts), sprintf("Start %d of %d \u2026", i, length(starts)))
     opt <- tryCatch(
-      optim(s, obj_fast, method = "Nelder-Mead",
+      optim(starts[[i]], obj_fast, method = "Nelder-Mead",
             control = list(maxit = 400, reltol = 1e-6)),
-      error = function(e) NULL
-    )
+      error = function(e) NULL)
     if (!is.null(opt) && is.finite(opt$value) && opt$value < best_val) {
-      best_val  <- opt$value
-      best_pars <- opt$par
+      best_val <- opt$value; best_pars <- opt$par
     }
   }
 
@@ -425,12 +421,12 @@ message("  Lambda (mean TWI): ", round(TWI_LAM, 2))
 WS_SF_NATIVE <- st_read(SHP_F, quiet = TRUE)
 WS_SF_NATIVE <- st_transform(WS_SF_NATIVE, crs(TWI_RASTER))
 
-message("  Startup complete.")
-
 # Clip DEM to watershed boundary for drawing elevation contours on maps
 DEM_WS <- mask(crop(rast(DEM_F),
                      vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F))))),
                vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F)))))
+
+message("  Startup complete.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPER: snap a value to the nearest slider step
@@ -460,8 +456,9 @@ app_css <- "
   .opt-params { font-size: 12px; color: #495057; margin-top: 4px;
                 padding: 6px 8px; background: #e9ecef; border-radius: 6px;
                 font-family: monospace; line-height: 1.6; }
-  .pg .help-block { font-size: 11px; color: #888; margin-top: -4px;
-                    margin-bottom: 10px; line-height: 1.3; }
+  .pg .help-block { font-size: 11px; color: #888;
+                    margin-top: 2px; margin-bottom: 2px; line-height: 1.3; }
+  .param-section h6 { cursor: pointer; }
 "
 
 ui <- page_sidebar(
@@ -474,12 +471,13 @@ ui <- page_sidebar(
     width = 330,
 
     # Year range selector: filters ALL_DATA to the chosen window
-    sliderInput("year_range", "Simulation Period",
+    sliderInput("year_range", "Viewing Period",
                 min   = as.integer(format(min(ALL_DATA$date), "%Y")),
                 max   = as.integer(format(max(ALL_DATA$date), "%Y")),
                 value = c(2000, 2001),
                 step  = 1, sep = "",
                 ticks = TRUE),
+    helpText("Select the time window to view. The model runs on the selected period."),
 
     actionButton("run_model", "\u25B6  Run Model",
                  class = "btn-success action-btn"),
@@ -491,64 +489,75 @@ ui <- page_sidebar(
 
     # Subsurface parameters: control baseflow & drainage
     div(class = "pg",
-      h6("\u2193 Subsurface"),
+      h6("\u2193 Subsurface Flow Parameters"),
+      
+      helpText("Initial subsurface flow at time zero. Sets the starting saturation deficit."),
       sliderInput("qs0",  "qs0 \u2013 init. flow (mm/d)",
                   min = 0.01, max = 10, value = 5.5, step = 0.01),
-      helpText("Initial subsurface flow at time zero. Sets the starting saturation deficit."),
+      
+      helpText("Log of soil transmissivity when fully saturated. Controls baseflow magnitude \u2014 higher = more baseflow."),
       sliderInput("lnTe", "ln(Te) \u2013 transmissivity",
                   min = -7, max = 5, value = 1.9, step = 0.1),
-      helpText("Log of soil transmissivity when fully saturated. Controls baseflow magnitude \u2014 higher = more baseflow."),
+      
+      helpText("Rate transmissivity declines with depth. Small m = flashy response; large m = slow drainage."),
       sliderInput("m",    "m \u2013 decay param (mm)",
                   min = 5, max = 100, value = 19, step = 1),
-      helpText("Rate transmissivity declines with depth. Small m = flashy response; large m = slow drainage."),
+      
+      helpText("Time delay for water to drain through the unsaturated zone to the water table."),
       sliderInput("td",   "td \u2013 unsat. delay (days)",
                   min = 1, max = 60, value = 3, step = 1),
-      helpText("Time delay for water to move through the unsaturated zone to the water table.")
     ),
 
     # Root zone parameters: control ET & soil moisture
     div(class = "pg",
-      h6("\U0001F331 Root Zone"),
+      h6("\U0001F331 Root Zone  & Evapotranspiration"),
+      
+      helpText("Initial root zone storage deficit. How dry the soil is at the start of simulation."),
       sliderInput("Sr0",   "Sr0 \u2013 init. deficit (mm)",
                   min = 0, max = 50, value = 2.5, step = 0.5),
-      helpText("Initial root zone storage deficit. How dry the soil is at the start of simulation."),
+      helpText("Maximum water the root zone can hold before draining. Controls ET \u2014 larger = more ET in summer."),
       sliderInput("Srmax", "Srmax \u2013 max capacity (mm)",
                   min = 5, max = 300, value = 65, step = 5),
-      helpText("Maximum water the root zone can hold before draining. Controls ET \u2014 larger = more ET in summer.")
     ),
 
     # Snow parameters: degree-day accumulation & melt
     div(class = "pg",
-      h6("\u2744 Snow"),
+      h6("\u2744 Snow Accumulation & Melt"),
+      
+      helpText("Temperature threshold: below this, precipitation falls as snow."),
       sliderInput("snow_t",  "Tmelt (\u00B0C)",
                   min = -2, max = 2, value = -0.7, step = 0.1),
-      helpText("Temperature threshold: below this, precipitation falls as snow."),
+      helpText("Degree-day melt factor. mm of snowmelt per degree above Tmelt per day."),
       sliderInput("snow_mf", "Melt coeff (mm/\u00B0C/d)",
                   min = 1, max = 6, value = 3.4, step = 0.1),
-      helpText("Degree-day melt factor. mm of snowmelt per degree above Tmelt per day.")
     ),
 
     actionButton("optimize", "\u26A1  Optimize Parameters",
                  class = "btn-primary action-btn"),
-    helpText("Nelder-Mead on 3-yr window (~5\u201320 sec)")
+    helpText("Automatically finds the best parameter values by minimizing the
+             difference between observed and simulated streamflow. Uses the 
+             Nelder-Mead algorithm, a derivative-free method that works well 
+             for non-smooth hydrological models.")
   ),
 
   # ── Main panel: tabbed plots ───────────────────────────────────────────────
   navset_card_tab(
-    nav_panel("Hydrograph",      plotlyOutput("hydrograph", height = "520px")),
-    nav_panel("Scatter Plot",    plotlyOutput("scatter",    height = "520px")),
-    nav_panel("Flow Duration",   plotlyOutput("fdc",        height = "520px")),
-    nav_panel("Snow & ET",       plotlyOutput("snow_et",    height = "520px")),
-    nav_panel("TWI Map",         plotOutput("twi_map",      height = "560px")),
+    nav_panel("Model Output",    plotlyOutput("model_output", height = "700px")),
+    nav_panel("Observed vs Simulated Discharge",
+              plotlyOutput("scatter", height = "520px")),
+    nav_panel("Flow Duration",   plotlyOutput("fdc", height = "520px")),
+    nav_panel("TWI Map",         plotOutput("twi_map", height = "560px")),
     nav_panel("Saturation Map",
               fluidRow(
-                column(12,
-                  # Animated month slider: shows monthly saturation states
-                  sliderInput("sat_month", "Month",
-                              min = 1, max = 12, value = 1,
-                              step = 1, width = "100%",
-                              animate = animationOptions(interval = 800, loop = TRUE)),
-                  plotOutput("sat_map", height = "480px")
+                column(8,
+                       sliderInput("sat_day", "Day", min = 1, max = 730, value = 1,
+                                   step = 7, width = "100%",
+                                   animate = animationOptions(interval = 1000, loop = FALSE)),
+                       plotOutput("sat_map", height = "460px")
+                ),
+                column(4,
+                       plotlyOutput("sat_discharge", height = "220px"),
+                       plotlyOutput("sat_fraction", height = "220px")
                 )
               ))
   )
@@ -583,15 +592,16 @@ server <- function(input, output, session) {
   # ── Run Model button ────────────────────────────────────────────────────────
   observeEvent(input$run_model, {
     d <- tryCatch(sim_data(), error = function(e) NULL)
+    
     if (is.null(d)) {
       showNotification("Check date range.", type = "error"); return()
-    }
-    res <- tryCatch(
-      run_topmodel(current_pars(), d, TOPIDX),
-      error = function(e) {
-        showNotification(paste("Error:", e$message), type = "error"); NULL
       }
-    )
+    res <- tryCatch(run_topmodel(current_pars(), d, TOPIDX),
+                    error = function(e) {
+                      showNotification(paste("Error:", e$message),
+                                       type = "error"); NULL
+                      })
+    
     if (!is.null(res)) {
       model_result(res)
       nse_str <- if (is.finite(res$nse)) sprintf("%.3f", res$nse) else "N/A"
@@ -614,17 +624,20 @@ server <- function(input, output, session) {
 
   # ── Optimize button ─────────────────────────────────────────────────────────
   observeEvent(input$optimize, {
-    showNotification("Optimizing (5-yr calibration window) \u2026",
-                     type = "message", duration = NULL, id = "opt_note")
-
     data <- tryCatch(sim_data(), error = function(e) NULL)
     if (is.null(data)) {
-      removeNotification("opt_note")
       showNotification("Check date range.", type = "error"); return()
-    }
-
-    best <- optimize_params(data, TOPIDX, cal_years = 5)
-    removeNotification("opt_note")
+      }
+    
+    showNotification("Optimizing \u2026 Start 1 of 3",
+                     type = "message", duration = NULL, id = "opt_prog")
+    
+    best <- optimize_params(data, TOPIDX, progress_fn = function(i, n, msg) {
+      showNotification(sprintf("Optimizing \u2026 %s", msg),
+                       type = "message", duration = NULL, id = "opt_prog")
+    })
+    
+    removeNotification("opt_prog")
 
     # Push the optimized values back to the sliders
     updateSliderInput(session, "qs0",     value = snap_to_step(best["qs0"],     0.01, 10,  0.01))
@@ -641,15 +654,14 @@ server <- function(input, output, session) {
       "qs0=%.3f  lnTe=%.2f  m=%.1f\nSr0=%.1f  Srmax=%.1f  td=%.1f\nTmelt=%.2f  Melt=%.2f",
       best["qs0"], best["lnTe"], best["m"],
       best["Sr0"], best["Srmax"], best["td"],
-      best["snow_t"], best["snow_mf"]
-    ))
+      best["snow_t"], best["snow_mf"]))
 
     # Re-run the full simulation with the exact optimized parameters
     res <- tryCatch(run_topmodel(best, data, TOPIDX), error = function(e) NULL)
     if (!is.null(res)) {
       model_result(res)
       nse_str <- if (is.finite(res$nse)) sprintf("%.3f", res$nse) else "N/A"
-      showNotification(sprintf("Optimized! NSE = %s (full period)", nse_str),
+      showNotification(sprintf("Optimized! NSE = %s", nse_str),
                        type = "message", duration = 5)
     }
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
@@ -659,12 +671,12 @@ server <- function(input, output, session) {
     res <- model_result()
     if (is.null(res) || is.na(res$nse) || !is.finite(res$nse)) {
       div(class = "nse-box nse-bad", "NSE: \u2014")
-    } else {
-      cls <- if (res$nse >= 0.5) "nse-good"
-             else if (res$nse >= 0) "nse-ok" else "nse-bad"
-      div(class = paste("nse-box", cls), sprintf("NSE = %.3f", res$nse))
-    }
-  })
+      } else {
+        cls <- if (res$nse >= 0.5) "nse-good"
+        else if (res$nse >= 0) "nse-ok" else "nse-bad"
+        div(class = paste("nse-box", cls), sprintf("NSE = %.3f", res$nse))
+        }
+    })
 
   # ── Show exact optimized parameter values below the NSE box ────────────────
   output$opt_params_display <- renderUI({
@@ -676,27 +688,67 @@ server <- function(input, output, session) {
   })
 
   # ════════════════════════════════════════════════════════════════════════════
-  # PLOTS
+  # MODEL OUTPUT: stacked subplots with shared x-axis
   # ════════════════════════════════════════════════════════════════════════════
   
-  # Daily observed vs simulated streamflow time series
-  output$hydrograph <- renderPlotly({
+  # Model output plots
+  output$model_output <- renderPlotly({
     res <- model_result()
     validate(need(!is.null(res), "Press \u25B6 Run Model to see results."))
-    d <- data.frame(date = res$dates, Observed = res$Qobs, Simulated = res$Qsim)
+    
+    d <- data.frame(date = res$dates, Qobs = res$Qobs, Qsim = res$Qsim,
+                    Qof = res$Qof,    Qb = res$Qb,     ET = res$ET,
+                    SWE = res$SWE,    Sd = res$Sd,     SF = res$SF * 100)
     nse_str <- if (is.finite(res$nse)) sprintf("%.3f", res$nse) else "N/A"
-    plot_ly(d, x = ~date) %>%
-      add_lines(y = ~Observed,  name = "Observed",
-                line = list(color = "#2980b9", width = 1.2)) %>%
-      add_lines(y = ~Simulated, name = "Simulated",
-                line = list(color = "#e74c3c", width = 1.2)) %>%
-      layout(title = list(text = paste0("Daily Streamflow  |  NSE = ", nse_str),
-                          font = list(size = 15)),
-             xaxis = list(title = ""),
-             yaxis = list(title = "Streamflow (mm/day)"),
-             legend = list(orientation = "h", y = -0.12),
-             hovermode = "x unified", margin = list(t = 50))
-  })
+    
+    # 1. Discharge
+    p1 <- plot_ly(d, x = ~date) |> 
+      add_lines(y = ~Qobs, name = "Observed", line = list(color = "#2980b9", width = 1.2)) |> 
+      add_lines(y = ~Qsim, name = "Simulated", line = list(color = "#e74c3c", width = 1.2)) |> 
+      layout(yaxis = list(title = "Q (mm/d)"),
+             annotations = list(text = paste0("NSE = ", nse_str),
+                                x = 0.02, y = 0.95, xref = "paper", yref = "paper",
+                                showarrow = FALSE, font = list(size = 12)))
+    
+    # 2. Surface runoff
+    p2 <- plot_ly(d, x = ~date) |> 
+      add_lines(y = ~Qof, name = "Surface Runoff", line = list(color = "#e67e22", width = 1)) |> 
+      layout(yaxis = list(title = "Qof (mm/d)"))
+    
+    # 3. Subsurface flow
+    p3 <- plot_ly(d, x = ~date) |> 
+      add_lines(y = ~Qb, name = "Subsurface Flow", line = list(color = "#8e44ad", width = 1)) |> 
+      layout(yaxis = list(title = "Qb (mm/d)"))
+    
+    # 4. ET
+    p4 <- plot_ly(d, x = ~date) |> 
+      add_lines(y = ~ET, name = "Actual ET", line = list(color = "#27ae60", width = 1)) |> 
+      layout(yaxis = list(title = "ET (mm/d)"))
+    
+    # 5. SWE
+    p5 <- plot_ly(d, x = ~date) |> 
+      add_lines(y = ~SWE, name = "SWE", line = list(color = "#3498db", width = 1)) |> 
+      layout(yaxis = list(title = "SWE (mm)"))
+    
+    # 6. Storage deficit
+    p6 <- plot_ly(d, x = ~date) |> 
+      add_lines(y = ~Sd, name = "Storage Deficit", line = list(color = "#c0392b", width = 1)) |> 
+      layout(yaxis = list(title = "Sd (mm)"))
+    
+    # 7. Saturated fraction
+    p7 <- plot_ly(d, x = ~date) |> 
+      add_lines(y = ~SF, name = "Saturated %", line = list(color = "#2166ac", width = 1)) |> 
+      layout(yaxis = list(title = "Sat (%)"),
+             xaxis = list(title = ""))
+    
+    subplot(p1, p2, p3, p4, p5, p6, p7,
+            nrows = 7, shareX = TRUE, titleY = TRUE,
+            heights = c(0.22, 0.11, 0.11, 0.11, 0.15, 0.15, 0.15)) |> 
+      layout(title = list(text = "Model Output", font = list(size = 16)),
+             showlegend = FALSE,
+             hovermode = "x unified",
+             margin = list(t = 50, b = 30, l = 60))
+    })
 
   # Observed vs simulated scatter: perfect model would follow the 1:1 line
   output$scatter <- renderPlotly({
@@ -708,10 +760,11 @@ server <- function(input, output, session) {
     validate(need(nrow(d) > 0, "No valid data."))
     rng <- range(c(d$obs, d$sim), na.rm = TRUE)
     plot_ly(d, x = ~obs, y = ~sim, type = "scattergl", mode = "markers",
-            marker = list(size = 3, color = "#3498db", opacity = 0.4)) %>%
+            marker = list(size = 3, color = "#3498db", opacity = 0.4)) |> 
       add_lines(x = rng, y = rng, name = "1:1",
-                line = list(color = "black", dash = "dash", width = 1)) %>%
-      layout(title = list(text = "Observed vs Simulated", font = list(size = 15)),
+                line = list(color = "black", dash = "dash", width = 1)) |> 
+      layout(title = list(text = "Observed vs Simulated Discharge",
+                          font = list(size = 15)),
              xaxis = list(title = "Observed (mm/d)"),
              yaxis = list(title = "Simulated (mm/d)"),
              showlegend = FALSE, margin = list(t = 50))
@@ -726,14 +779,14 @@ server <- function(input, output, session) {
     sim_v <- sort(res$Qsim[idx][is.finite(res$Qsim[idx])], decreasing = TRUE)
     exc_o <- seq_along(obs_v) / length(obs_v) * 100
     exc_s <- seq_along(sim_v) / length(sim_v) * 100
-    plot_ly() %>%
+    plot_ly() |> 
       add_lines(x = exc_o, y = obs_v, name = "Observed",
-                line = list(color = "#2980b9", width = 1.5)) %>%
+                line = list(color = "#2980b9", width = 1.5)) |> 
       add_lines(x = exc_s, y = sim_v, name = "Simulated",
-                line = list(color = "#e74c3c", width = 1.5)) %>%
+                line = list(color = "#e74c3c", width = 1.5)) |> 
       layout(title = list(text = "Flow-Duration Curve", font = list(size = 15)),
              xaxis = list(title = "Exceedance (%)"),
-             yaxis = list(title = "Streamflow (mm/d)", type = "log"),
+             yaxis = list(title = "Discharge (mm/d)", type = "log"),
              legend = list(orientation = "h", y = -0.12), margin = list(t = 50))
   })
 
@@ -742,13 +795,13 @@ server <- function(input, output, session) {
     res <- model_result()
     validate(need(!is.null(res), "Press \u25B6 Run Model to see results."))
     d <- data.frame(date = res$dates, SWE = res$SWE, ET = res$ET)
-    plot_ly(d, x = ~date) %>%
+    plot_ly(d, x = ~date) |> 
       add_lines(y = ~SWE, name = "SWE (mm)",
                 line = list(color = "#3498db", width = 1.3),
-                yaxis = "y") %>%
+                yaxis = "y") |> 
       add_lines(y = ~ET,  name = "Actual ET (mm/d)",
                 line = list(color = "#27ae60", width = 1.2),
-                yaxis = "y2") %>%
+                yaxis = "y2") |> 
       layout(title = list(text = "Snow Water Equivalent & Actual ET",
                           font = list(size = 15)),
              xaxis = list(title = ""),
@@ -767,7 +820,7 @@ server <- function(input, output, session) {
   output$twi_map <- renderPlot({
     par(mar = c(2, 2, 3, 4), bg = "white")
     plot(TWI_RASTER,
-         col  = hcl.colors(50, "YlGnBu", rev = TRUE),
+         col = hcl.colors(50, "YlGnBu", rev = TRUE),
          axes = FALSE,
          main = sprintf("Topographic Wetness Index  (FD8, \u03BB = %.1f)", TWI_LAM),
          cex.main = 1.3)
@@ -778,56 +831,56 @@ server <- function(input, output, session) {
     contour(raster::raster(DEM_WS), add = TRUE,
             nlevels = 10, col = adjustcolor("#333333", alpha.f = 0.5),
             lwd = 0.6, drawlabels = TRUE, labcex = 0.6)
+    mtext("Contour elevation is in meters", side = 1, line = 0.5,
+          cex = 0.8, col = "#666666")
   }, res = 120)
 
-  # Update the saturation map month slider range when a new model result is
-  # available
+  # Update the saturation map day slider range when a new model result is available
   observe({
     res <- model_result()
     req(!is.null(res))
-    n_months <- length(res$monthly_Sd)
-    updateSliderInput(session, "sat_month",
-                      min = 1, max = n_months, value = n_months)
+    n_days <- length(res$Sd)
+    updateSliderInput(session, "sat_day", min = 1, max = n_days, value = 1)
   })
 
-  # Animated saturation map: binary saturated/unsaturated based on a monthly
+  # Animated saturation map: binary saturated/unsaturated based on a daily
   # mean deficit vs. the TWI threshold for each cell. Cells with TWI >= 
   # threshold are predicted to be at or above the water table (saturated).
   output$sat_map <- renderPlot({
     res <- model_result()
     validate(need(!is.null(res), "Run or optimize the model first."))
-
-    month_idx <- input$sat_month
-    req(month_idx)
-    n_months <- length(res$monthly_Sd)
-    if (month_idx > n_months) month_idx <- n_months
-
-    # Convert monthly deficit to a spatial saturation threshold
-    Sd  <- res$monthly_Sd[month_idx]
+    
+    day_idx <- input$sat_day
+    req(day_idx)
+    n_days <- length(res$Sd)
+    if (day_idx > n_days) day_idx <- n_days
+    
+    # Convert daily deficit to a spatial saturation threshold
+    Sd  <- res$Sd[day_idx]
     m   <- res$m
     lam <- res$lam
     thresh <- lam + Sd / m
-    label <- res$monthly_labels[month_idx]
-
+    label <- format(res$dates[day_idx], "%Y-%m-%d")
+    
     # Classify each raster cell as saturated (1) or unsaturated (0)
     twi_v <- values(TWI_RASTER)
     if (is.matrix(twi_v)) twi_v <- twi_v[, 1]
     sat_v <- rep(NA_real_, length(twi_v))
     valid <- !is.na(twi_v)
     sat_v[valid] <- ifelse(twi_v[valid] >= thresh, 1, 0)
-
+    
     sat_rast <- TWI_RASTER
     values(sat_rast) <- sat_v
-
+    
     pct_sat <- round(100 * sum(sat_v == 1, na.rm = TRUE) / sum(valid), 1)
-
+    
     par(mar = c(2, 2, 3, 1), bg = "white")
     plot(sat_rast,
-         col    = c("#f5e6c8", "#2166ac"),
+         col = c("#f5e6c8", "#2166ac"),
          breaks = c(-0.5, 0.5, 1.5),
          legend = FALSE, axes = FALSE,
-         main   = sprintf("%s  \u2014  %.1f%% saturated", label, pct_sat),
-         cex.main = 1.3)
+         main = sprintf("%s  \u2014  %.1f%% saturated", label, pct_sat),
+         cex.main = 1.2)
     plot(st_geometry(WS_SF_NATIVE), add = TRUE,
          border = "#222222", lwd = 2.5, col = NA)
 
@@ -835,16 +888,67 @@ server <- function(input, output, session) {
     contour(raster::raster(DEM_WS), add = TRUE,
             nlevels = 10, col = adjustcolor("#555555", alpha.f = 0.5),
             lwd = 0.6, drawlabels = TRUE, labcex = 0.6)
-
     legend("bottomright",
            legend = c("Saturated", "Unsaturated"),
-           fill   = c("#2166ac", "#f5e6c8"),
+           fill = c("#2166ac", "#f5e6c8"),
            border = c("#2166ac", "#f5e6c8"),
-           bty = "n", cex = 1.1)
-  }, res = 120)
+           bty = "n", cex = 0.9)
+    mtext("Contour elevations in meters", side = 1, line = 0.5,
+          cex = 0.7, col = "#666666")
+  }, res = 110)
+
+  # Discharge time series with marker showing current day
+  output$sat_discharge <- renderPlotly({
+    res <- model_result()
+    validate(need(!is.null(res), ""))
+    
+    day_idx <- input$sat_day
+    req(day_idx)
+    n_days <- length(res$Sd)
+    if (day_idx > n_days) day_idx <- n_days
+    
+    d <- data.frame(date = res$dates, Qobs = res$Qobs, Qsim = res$Qsim)
+    
+    plot_ly(d, x = ~date) |> 
+      add_lines(y = ~Qobs, name = "Observed", line = list(color = "#2980b9", width = 1)) |> 
+      add_lines(y = ~Qsim, name = "Simulated", line = list(color = "#e74c3c", width = 1)) |> 
+      add_markers(x = res$dates[day_idx], y = res$Qsim[day_idx],
+                  name = "Current", marker = list(color = "black", size = 8)) |> 
+      layout(title = list(text = "Discharge", font = list(size = 12)),
+             yaxis = list(title = "mm/d", titlefont = list(size = 10)),
+             xaxis = list(title = ""),
+             showlegend = FALSE,
+             margin = list(t = 30, b = 20, l = 50, r = 10),
+             hovermode = "x unified")
+  })
+  
+  # Saturated fraction time series with marker
+  output$sat_fraction <- renderPlotly({
+    res <- model_result()
+    validate(need(!is.null(res), ""))
+    
+    day_idx <- input$sat_day
+    req(day_idx)
+    n_days <- length(res$Sd)
+    if (day_idx > n_days) day_idx <- n_days
+    
+    d <- data.frame(date = res$dates, SF = res$SF * 100)
+    
+    plot_ly(d, x = ~date) |> 
+      add_lines(y = ~SF, name = "Saturated %", line = list(color = "#2166ac", width = 1)) |> 
+      add_markers(x = res$dates[day_idx], y = d$SF[day_idx],
+                  name = "Current", marker = list(color = "black", size = 8)) |> 
+      layout(title = list(text = "Saturated Catchment Area", font = list(size = 12)),
+             yaxis = list(title = "%", titlefont = list(size = 10)),
+             xaxis = list(title = ""),
+             showlegend = FALSE,
+             margin = list(t = 30, b = 20, l = 50, r = 10),
+             hovermode = "x unified")
+  })
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 8.  LAUNCH
 # ═══════════════════════════════════════════════════════════════════════════════
 shinyApp(ui, server)
+
