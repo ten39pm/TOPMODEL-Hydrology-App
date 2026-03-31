@@ -30,53 +30,71 @@ if (requireNamespace("whitebox", quietly = TRUE)) {
 # ═══════════════════════════════════════════════════════════════════════════════
 # 0.  FILE PATHS
 # ═══════════════════════════════════════════════════════════════════════════════
-DATA_DIR <- "data"
-PRECIP_F <- file.path(DATA_DIR, "DailyWatershed.csv")                  # daily precipitation
-FLOW_F   <- file.path(DATA_DIR, "HBEF_DailyStreamflow_1956-2024.csv")  # observed streamflow
-TEMP_F   <- file.path(DATA_DIR, "HBEF_air_temp_daily.csv")             # air temperature
-DEM_F    <- file.path(DATA_DIR, "dem_10m.tif")                         # DEM
-SHP_F    <- file.path(DATA_DIR, "Watershed3HB.shp")                    # watershed boundary polygon
+DATA_DIR    <- "data"
+TWI_F       <- file.path(DATA_DIR, "twi_precomputed.tif")  # TWI raster
+STARTUP_F   <- file.path(DATA_DIR, "app_startup.rds")      # all other precomputed objects
+
 
 # Temporary folder for WBT files
-TEMP_DIR <- file.path(tempdir(), "topmodel_wb")
-dir.create(TEMP_DIR, showWarnings = FALSE, recursive = TRUE)
+# TEMP_DIR <- file.path(tempdir(), "topmodel_wb")
+# dir.create(TEMP_DIR, showWarnings = FALSE, recursive = TRUE)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1.  LOAD & MERGE DAILY DATA
-# Reads in precipitation, streamflow, and temperature data.
+# 1.  LOAD PRECOMPUTED DATA
+# Replaces all heavy start-up processing. Both files are created by running
+# precompute_twi.R and then precompute_data.R locally.
 # ═══════════════════════════════════════════════════════════════════════════════
-load_daily_data <- function() {
-  # Read & filter each dataset to Watershed 3
-  precip <- read.csv(PRECIP_F, stringsAsFactors = FALSE)
-  precip$DATE <- as.Date(trimws(precip$DATE))
-  precip <- precip[trimws(precip$watershed) == "W3", c("DATE", "Precip")]
-  names(precip) <- c("date", "precip_mm")
-
-  flow <- read.csv(FLOW_F, stringsAsFactors = FALSE)
-  flow$DATE <- as.Date(trimws(flow$DATE))
-  flow <- flow[flow$WS == 3, c("DATE", "Streamflow")]
-  names(flow) <- c("date", "flow_mm")
-  
-  # Average min/max temperatures to get the daily mean
-  temp <- read.csv(TEMP_F, stringsAsFactors = FALSE)
-  temp$date <- as.Date(trimws(temp$date))
-  temp_avg <- temp |> 
-    group_by(date) |> 
-    summarize(tavg = mean(AVE, na.rm = TRUE), .groups = "drop")
-
-  # Inner join precip & flow and left join by temp_avg
-  df <- merge(precip, flow, by = "date", all = FALSE)
-  df <- merge(df, temp_avg, by = "date", all.x = TRUE)
-  df <- df[order(df$date), ]
-
-  # Fill missing temperature values by linear interpolation b/w valid points
-  if (any(is.na(df$tavg))) {
-    idx <- which(!is.na(df$tavg))
-    df$tavg <- approx(idx, df$tavg[idx], seq_len(nrow(df)), rule = 2)$y
-  }
-  df$precip_mm[is.na(df$precip_mm)] <- 0
-  df
+if (!file.exists(STARTUP_F)) {
+  stop("Start-up cache not found. Run precompute_twi.R and then precompute_data.R first.")
 }
+message("Loading precomputed startup cache ...")
+cache        <- readRDS(STARTUP_F)
+ALL_DATA     <- cache$ALL_DATA       # merged daily precip/flow/temp
+TOPIDX       <- cache$TOPIDX         # TWI class table for TOPMODEL
+TWI_LAM      <- cache$TWI_LAM        # mean TWI (lambda)
+WS_SF_NATIVE <- cache$WS_SF_NATIVE   # watershed boundary polygon
+DEM_WS       <- cache$DEM_WS         # clipped DEM for contour lines
+rm(cache)  # free memory
+
+# The TWI raster is kept as a separate .tif (not bundled in the .rds)
+if (!file.exists(TWI_F)) {
+  stop("TWI raster not found. Run precompute_twi.R first.")
+}
+TWI_RASTER <- rast(TWI_F)
+message("  Startup complete.")
+
+# load_daily_data <- function() {
+#   # Read & filter each dataset to Watershed 3
+#   precip <- read_csv(PRECIP_F, stringsAsFactors = FALSE)
+#   precip$DATE <- as.Date(trimws(precip$DATE))
+#   precip <- precip[trimws(precip$watershed) == "W3", c("DATE", "Precip")]
+#   names(precip) <- c("date", "precip_mm")
+# 
+#   flow <- read_csv(FLOW_F, stringsAsFactors = FALSE)
+#   flow$DATE <- as.Date(trimws(flow$DATE))
+#   flow <- flow[flow$WS == 3, c("DATE", "Streamflow")]
+#   names(flow) <- c("date", "flow_mm")
+#   
+#   # Average min/max temperatures to get the daily mean
+#   temp <- read_csv(TEMP_F, stringsAsFactors = FALSE)
+#   temp$date <- as.Date(trimws(temp$date))
+#   temp_avg <- temp |> 
+#     group_by(date) |> 
+#     summarize(tavg = mean(AVE, na.rm = TRUE), .groups = "drop")
+# 
+#   # Inner join precip & flow and left join by temp_avg
+#   df <- merge(precip, flow, by = "date", all = FALSE)
+#   df <- merge(df, temp_avg, by = "date", all.x = TRUE)
+#   df <- df[order(df$date), ]
+
+#   # Fill missing temperature values by linear interpolation b/w valid points
+#   if (any(is.na(df$tavg))) {
+#     idx <- which(!is.na(df$tavg))
+#     df$tavg <- approx(idx, df$tavg[idx], seq_len(nrow(df)), rule = 2)$y
+#   }
+#   df$precip_mm[is.na(df$precip_mm)] <- 0
+#   df
+# }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2.  HAMON PET (mm/day)
@@ -120,7 +138,7 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
   snow_t  <- pars["snow_t"]        # snow/rain temperature threshold (°C)
   snow_mf <- pars["snow_mf"]       # degree-day melt factor (mm/°C/d)
 
-  # Compute mean TWI (lambda)
+  # Area-weighted mean TWI (lambda): converts watershed deficit to per-cell thresholds
   twi_vals <- topidx[, 1]
   twi_frac <- topidx[, 2]
   lam      <- sum(twi_vals * twi_frac)  # area-weighted mean TWI
@@ -132,7 +150,7 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
   tfc <- cumsum(twi_frac[si])  # cumulative area fractions
   nc  <- length(tts)
 
-  # Initialize state variables from parameters
+  # Initialize state variables
   Sd  <- -m * (log(max(qs0, 1e-10)) - lnTe)  # initial saturation deficit (mm)
   if (Sd > 2000) Sd <- 2000; if (Sd < 0) Sd <- 0
   Srz <- Sr0        # root zone storage deficit
@@ -220,11 +238,6 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
     ss_tot <- sum((o[ok] - mean(o[ok]))^2)
     nse <- ifelse(ss_tot > 0, 1 - ss_res / ss_tot, NA_real_)
   }
-
-  # Monthly mean deficit: drives the saturation map animation in the UI
-  # months_vec <- format(data$date, "%Y-%m")
-  # monthly_Sd <- tapply(Sd_out, months_vec, mean)
-  # monthly_labels <- names(monthly_Sd)
 
   list(Qsim = Qsim, Qobs = obs, Qb = Qb_out, Qof = Qof_out,
        SWE = SWE_out, ET = ET_out, Sd = Sd_out, SF = SF_out,
@@ -385,48 +398,48 @@ optimize_params <- function(data, topidx, cal_years = 3) {
   pmax(pmin(best_pars, upper), lower) # clamp to valid parameter bounds
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5.  PRECOMPUTE AT STARTUP
-#
-# These objects are created once the app launches and are shared across all
-# user sessions (global scope in Shiny = computed before server() runs).
-# ═══════════════════════════════════════════════════════════════════════════════
-message("Loading daily data ...")
-ALL_DATA <- load_daily_data()
-message(sprintf("  %d records: %s to %s",
-                nrow(ALL_DATA), min(ALL_DATA$date), max(ALL_DATA$date)))
-
-message("Computing TWI ...")
-TWI_PRECOMPUTED <- file.path(DATA_DIR, "twi_precomputed.tif")
-if (file.exists(TWI_PRECOMPUTED)) {
-  # Fast path: precomputed file exists (always the case on shinyapps.io)
-  message("  Loading precomputed TWI ...")
-  TWI_RASTER <- rast(TWI_PRECOMPUTED)
-} else {
-  # Slow path: compute from scratch locally (requires WBT)
-  if (!HAS_WHITEBOX) stop("WhiteBox is not installed and there is no precomputed TWI found.
-                          Run precompute_twi.R first.")
-  message("  Computing via WhiteBox Tools (FD8) ...")
-  TWI_RASTER <- compute_twi_raster()
-  writeRaster(TWI_RASTER, TWI_PRECOMPUTED, overwrite = TRUE)
-  message("  Saved precomputed TWI to ", TWI_PRECOMPUTED)
-}
-
-# Build the TOPIDX (16 TWI classes → area fractions)
-TOPIDX     <- make_topidx_classes(TWI_RASTER, n_classes = 16)
-TWI_LAM    <- sum(TOPIDX[, 1] * TOPIDX[, 2])  # mean TWI (lambda)
-message("  Lambda (mean TWI): ", round(TWI_LAM, 2))
-
-# Load watershed boundary & re-project to match the TWI raster CRS
-WS_SF_NATIVE <- st_read(SHP_F, quiet = TRUE)
-WS_SF_NATIVE <- st_transform(WS_SF_NATIVE, crs(TWI_RASTER))
-
-# Clip DEM to watershed boundary for drawing elevation contours on maps
-DEM_WS <- mask(crop(rast(DEM_F),
-                     vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F))))),
-               vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F)))))
-
-message("  Startup complete.")
+# # ═══════════════════════════════════════════════════════════════════════════════
+# # 5.  PRECOMPUTE AT STARTUP
+# #
+# # These objects are created once the app launches and are shared across all
+# # user sessions (global scope in Shiny = computed before server() runs).
+# # ═══════════════════════════════════════════════════════════════════════════════
+# message("Loading daily data ...")
+# ALL_DATA <- load_daily_data()
+# message(sprintf("  %d records: %s to %s",
+#                 nrow(ALL_DATA), min(ALL_DATA$date), max(ALL_DATA$date)))
+# 
+# message("Computing TWI ...")
+# TWI_PRECOMPUTED <- file.path(DATA_DIR, "twi_precomputed.tif")
+# if (file.exists(TWI_PRECOMPUTED)) {
+#   # Fast path: precomputed file exists (always the case on shinyapps.io)
+#   message("  Loading precomputed TWI ...")
+#   TWI_RASTER <- rast(TWI_PRECOMPUTED)
+# } else {
+#   # Slow path: compute from scratch locally (requires WBT)
+#   if (!HAS_WHITEBOX) stop("WhiteBox is not installed and there is no precomputed TWI found.
+#                           Run precompute_twi.R first.")
+#   message("  Computing via WhiteBox Tools (FD8) ...")
+#   TWI_RASTER <- compute_twi_raster()
+#   writeRaster(TWI_RASTER, TWI_PRECOMPUTED, overwrite = TRUE)
+#   message("  Saved precomputed TWI to ", TWI_PRECOMPUTED)
+# }
+# 
+# # Build the TOPIDX (16 TWI classes → area fractions)
+# TOPIDX     <- make_topidx_classes(TWI_RASTER, n_classes = 16)
+# TWI_LAM    <- sum(TOPIDX[, 1] * TOPIDX[, 2])  # mean TWI (lambda)
+# message("  Lambda (mean TWI): ", round(TWI_LAM, 2))
+# 
+# # Load watershed boundary & re-project to match the TWI raster CRS
+# WS_SF_NATIVE <- st_read(SHP_F, quiet = TRUE)
+# WS_SF_NATIVE <- st_transform(WS_SF_NATIVE, crs(TWI_RASTER))
+# 
+# # Clip DEM to watershed boundary for drawing elevation contours on maps
+# DEM_WS <- mask(crop(rast(DEM_F),
+#                      vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F))))),
+#                vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F)))))
+# 
+# message("  Startup complete.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPER: snap a value to the nearest slider step
@@ -437,7 +450,7 @@ snap_to_step <- function(val, min_val, max_val, step) {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6.  SHINY UI
+# 5.  SHINY UI
 # ═══════════════════════════════════════════════════════════════════════════════
 # Custom CSS for the NSE score box & sidebar parameter groups
 app_css <- "
@@ -482,8 +495,7 @@ ui <- page_sidebar(
     actionButton("run_model", "\u25B6  Run Model",
                  class = "btn-success action-btn"),
 
-    # NSE score box (green/yellow/red based on the value) & an optimized
-    # parameter readout
+    # NSE score box (green/yellow/red based on the value) & an optimized parameter readout
     uiOutput("nse_display"),
     uiOutput("opt_params_display"),
 
@@ -564,7 +576,7 @@ ui <- page_sidebar(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 7.  SHINY SERVER
+# 6.  SHINY SERVER
 # ═══════════════════════════════════════════════════════════════════════════════
 server <- function(input, output, session) {
 
@@ -948,7 +960,7 @@ server <- function(input, output, session) {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 8.  LAUNCH
+# 7.  LAUNCH
 # ═══════════════════════════════════════════════════════════════════════════════
 shinyApp(ui, server)
 

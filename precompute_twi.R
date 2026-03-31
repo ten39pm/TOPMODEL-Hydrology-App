@@ -8,9 +8,9 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Libraries ──────────────────────────────────────────────────────────────────
-library(terra) # package for raster & vector spatial data
-library(sf) # package for vector/shapefile data (watershed boundary)
-library(whitebox) # package for geospatial data analysis
+library(terra)     # package for raster & vector spatial data
+library(sf)        # package for vector/shapefile data (watershed boundary)
+library(whitebox)  # package for geospatial data analysis
 
 # Initialize WBT
 wbt_init()
