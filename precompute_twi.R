@@ -114,3 +114,4 @@ make_topidx_classes <- function(twi_raster, n_classes = 16) {
   frac <- cnts / sum(cnts)
   cbind(twi = mids, frac = frac)
 }
+

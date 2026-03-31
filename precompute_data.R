@@ -107,3 +107,4 @@ startup_cache <- list(
 saveRDS(startup_cache, OUT_F)
 message("Done! You can now deploy to shinyapps.io.")
 message("Files needed in Data/: twi_precomputed.tif, app_startup.rds")
+
