@@ -30,71 +30,53 @@ if (requireNamespace("whitebox", quietly = TRUE)) {
 # ═══════════════════════════════════════════════════════════════════════════════
 # 0.  FILE PATHS
 # ═══════════════════════════════════════════════════════════════════════════════
-DATA_DIR    <- "data"
-TWI_F       <- file.path(DATA_DIR, "twi_precomputed.tif")  # TWI raster
-STARTUP_F   <- file.path(DATA_DIR, "app_startup.rds")      # all other precomputed objects
-
+DATA_DIR <- "data"
+PRECIP_F <- file.path(DATA_DIR, "DailyWatershed.csv")                  # daily precipitation
+FLOW_F   <- file.path(DATA_DIR, "HBEF_DailyStreamflow_1956-2024.csv")  # observed streamflow
+TEMP_F   <- file.path(DATA_DIR, "HBEF_air_temp_daily.csv")             # air temperature
+DEM_F    <- file.path(DATA_DIR, "dem_10m.tif")                         # DEM
+SHP_F    <- file.path(DATA_DIR, "Watershed3HB.shp")                    # watershed boundary polygon
 
 # Temporary folder for WBT files
-# TEMP_DIR <- file.path(tempdir(), "topmodel_wb")
-# dir.create(TEMP_DIR, showWarnings = FALSE, recursive = TRUE)
+TEMP_DIR <- file.path(tempdir(), "topmodel_wb")
+dir.create(TEMP_DIR, showWarnings = FALSE, recursive = TRUE)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1.  LOAD PRECOMPUTED DATA
-# Replaces all heavy start-up processing. Both files are created by running
-# precompute_twi.R and then precompute_data.R locally.
+# 1.  LOAD & MERGE DAILY DATA
+# Reads in precipitation, streamflow, and temperature data.
 # ═══════════════════════════════════════════════════════════════════════════════
-if (!file.exists(STARTUP_F)) {
-  stop("Start-up cache not found. Run precompute_twi.R and then precompute_data.R first.")
+load_daily_data <- function() {
+  # Read & filter each dataset to Watershed 3
+  precip <- read.csv(PRECIP_F, stringsAsFactors = FALSE)
+  precip$DATE <- as.Date(trimws(precip$DATE))
+  precip <- precip[trimws(precip$watershed) == "W3", c("DATE", "Precip")]
+  names(precip) <- c("date", "precip_mm")
+  
+  flow <- read.csv(FLOW_F, stringsAsFactors = FALSE)
+  flow$DATE <- as.Date(trimws(flow$DATE))
+  flow <- flow[flow$WS == 3, c("DATE", "Streamflow")]
+  names(flow) <- c("date", "flow_mm")
+  
+  # Average min/max temperatures to get the daily mean
+  temp <- read.csv(TEMP_F, stringsAsFactors = FALSE)
+  temp$date <- as.Date(trimws(temp$date))
+  temp_avg <- temp |> 
+    group_by(date) |> 
+    summarize(tavg = mean(AVE, na.rm = TRUE), .groups = "drop")
+  
+  # Inner join precip & flow and left join by temp_avg
+  df <- merge(precip, flow, by = "date", all = FALSE)
+  df <- merge(df, temp_avg, by = "date", all.x = TRUE)
+  df <- df[order(df$date), ]
+  
+  # Fill missing temperature values by linear interpolation b/w valid points
+  if (any(is.na(df$tavg))) {
+    idx <- which(!is.na(df$tavg))
+    df$tavg <- approx(idx, df$tavg[idx], seq_len(nrow(df)), rule = 2)$y
+  }
+  df$precip_mm[is.na(df$precip_mm)] <- 0
+  df
 }
-message("Loading precomputed startup cache ...")
-cache        <- readRDS(STARTUP_F)
-ALL_DATA     <- cache$ALL_DATA       # merged daily precip/flow/temp
-TOPIDX       <- cache$TOPIDX         # TWI class table for TOPMODEL
-TWI_LAM      <- cache$TWI_LAM        # mean TWI (lambda)
-WS_SF_NATIVE <- cache$WS_SF_NATIVE   # watershed boundary polygon
-DEM_WS       <- cache$DEM_WS         # clipped DEM for contour lines
-rm(cache)  # free memory
-
-# The TWI raster is kept as a separate .tif (not bundled in the .rds)
-if (!file.exists(TWI_F)) {
-  stop("TWI raster not found. Run precompute_twi.R first.")
-}
-TWI_RASTER <- rast(TWI_F)
-message("  Startup complete.")
-
-# load_daily_data <- function() {
-#   # Read & filter each dataset to Watershed 3
-#   precip <- read_csv(PRECIP_F, stringsAsFactors = FALSE)
-#   precip$DATE <- as.Date(trimws(precip$DATE))
-#   precip <- precip[trimws(precip$watershed) == "W3", c("DATE", "Precip")]
-#   names(precip) <- c("date", "precip_mm")
-# 
-#   flow <- read_csv(FLOW_F, stringsAsFactors = FALSE)
-#   flow$DATE <- as.Date(trimws(flow$DATE))
-#   flow <- flow[flow$WS == 3, c("DATE", "Streamflow")]
-#   names(flow) <- c("date", "flow_mm")
-#   
-#   # Average min/max temperatures to get the daily mean
-#   temp <- read_csv(TEMP_F, stringsAsFactors = FALSE)
-#   temp$date <- as.Date(trimws(temp$date))
-#   temp_avg <- temp |> 
-#     group_by(date) |> 
-#     summarize(tavg = mean(AVE, na.rm = TRUE), .groups = "drop")
-# 
-#   # Inner join precip & flow and left join by temp_avg
-#   df <- merge(precip, flow, by = "date", all = FALSE)
-#   df <- merge(df, temp_avg, by = "date", all.x = TRUE)
-#   df <- df[order(df$date), ]
-
-#   # Fill missing temperature values by linear interpolation b/w valid points
-#   if (any(is.na(df$tavg))) {
-#     idx <- which(!is.na(df$tavg))
-#     df$tavg <- approx(idx, df$tavg[idx], seq_len(nrow(df)), rule = 2)$y
-#   }
-#   df$precip_mm[is.na(df$precip_mm)] <- 0
-#   df
-# }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2.  HAMON PET (mm/day)
@@ -118,16 +100,16 @@ hamon_pet <- function(tavg, doy, lat_deg = 43.95) {
 # monthly mean deficits for the saturation map animation.
 # ═══════════════════════════════════════════════════════════════════════════════
 run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
-
+  
   n    <- nrow(data)
   P    <- data$precip_mm
   tavg <- data$tavg
   obs  <- data$flow_mm
-
+  
   # Use the precomputed PET if provided, otherwise calculate from temperature
   if (!is.null(pet_pre)) { pet <- pet_pre
   } else { pet <- hamon_pet(tavg, yday(data$date)) }
-
+  
   # Parameters 
   qs0     <- pars["qs0"]           # initial subsurface flow (mm/d)
   lnTe    <- pars["lnTe"]          # log of soil transmissivity
@@ -137,20 +119,20 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
   td      <- max(pars["td"], 0.1)  # unsaturated zone time delay (days)
   snow_t  <- pars["snow_t"]        # snow/rain temperature threshold (°C)
   snow_mf <- pars["snow_mf"]       # degree-day melt factor (mm/°C/d)
-
-  # Area-weighted mean TWI (lambda): converts watershed deficit to per-cell thresholds
+  
+  # Compute mean TWI (lambda)
   twi_vals <- topidx[, 1]
   twi_frac <- topidx[, 2]
   lam      <- sum(twi_vals * twi_frac)  # area-weighted mean TWI
-
+  
   # Pre-sort TWI thresholds (descending)
   twi_thresh <- m * (twi_vals - lam)
   si  <- order(twi_thresh, decreasing = TRUE)
   tts <- twi_thresh[si]        # sorted thresholds
   tfc <- cumsum(twi_frac[si])  # cumulative area fractions
   nc  <- length(tts)
-
-  # Initialize state variables
+  
+  # Initialize state variables from parameters
   Sd  <- -m * (log(max(qs0, 1e-10)) - lnTe)  # initial saturation deficit (mm)
   if (Sd > 2000) Sd <- 2000; if (Sd < 0) Sd <- 0
   Srz <- Sr0        # root zone storage deficit
@@ -158,12 +140,12 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
   SWE <- 0          # snow water equivalent      
   Te  <- exp(lnTe)  # transmissivity at saturation
   td_m <- td / m    # scaled time delay
-
+  
   # Pre-allocate output arrays
   Qsim <- numeric(n); Qb_out <- numeric(n); Qof_out <- numeric(n)
   SWE_out <- numeric(n); ET_out <- numeric(n); Sd_out <- numeric(n)
   SF_out <- numeric(n)
-
+  
   # ── Daily time step loop ───────────────────────────────────────────────────
   for (t in seq_len(n)) {
     tv <- tavg[t]
@@ -177,7 +159,7 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
       SWE <- SWE - ma; rain <- P[t] + ma  # rain + snow melt = effective rainfall
     }
     SWE_out[t] <- SWE
-
+    
     # Saturated area fraction — binary search on sorted thresholds
     # sf = fraction of watershed that is currently at or above the water table
     if (Sd >= tts[1L]) { sf <- 0
@@ -190,24 +172,24 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
       }
       sf <- tfc[lo]
     }
-
+    
     # Saturation-excess overland flow: rain on already-saturated areas
     qof   <- sf * rain
     infil <- rain - qof
     Qof_out[t] <- qof
-
+    
     # Root zone water balance
     Srz <- Srz - infil                           # infiltration fills root zone
     if (Srz < 0) { Suz <- Suz - Srz; Srz <- 0 }  # overflow to unsaturated zone
     if (Srz < Srmax) { ae <- pet[t] * (1 - Srz / Srmax) } else { ae <- 0 }
     Srz <- Srz + ae; if (Srz > Srmax) Srz <- Srmax
     ET_out[t] <- ae
-
+    
     # Drainage from unsaturated zone to water table (delayed by td)
     if (Suz > 0 && Sd > 0) {
       quz <- Suz / (td_m * Sd); if (quz > Suz) quz <- Suz; Suz <- Suz - quz
     } else { quz <- 0 }
-
+    
     # Update watershed-average deficit
     Sd <- Sd - quz; if (Sd < 0) Sd <- 0
     
@@ -215,15 +197,15 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
     qb <- Te * exp(-Sd / m)
     if (qb > Sd + 50) qb <- Sd + 50; if (qb < 0) qb <- 0
     Sd <- Sd + qb; if (Sd < 0) Sd <- 0  # deficit increases as water leaves
-
+    
     Qb_out[t]  <- qb
     Qsim[t]    <- qb + qof  # total flow = baseflow + overland flow
     Sd_out[t]  <- Sd
   }
-
+  
   Qsim[!is.finite(Qsim)] <- 0
   Qsim <- pmax(Qsim, 0)
-
+  
   # Nash-Sutcliffe Efficiency (NSE): 1 = perfect, 0 = as good as mean, <0 = poor
   # Skip the first 365 days (warmup), so that the initial conditions don't bias 
   # the score.
@@ -238,12 +220,17 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
     ss_tot <- sum((o[ok] - mean(o[ok]))^2)
     nse <- ifelse(ss_tot > 0, 1 - ss_res / ss_tot, NA_real_)
   }
-
+  
+  # Monthly mean deficit: drives the saturation map animation in the UI
+  # months_vec <- format(data$date, "%Y-%m")
+  # monthly_Sd <- tapply(Sd_out, months_vec, mean)
+  # monthly_labels <- names(monthly_Sd)
+  
   list(Qsim = Qsim, Qobs = obs, Qb = Qb_out, Qof = Qof_out,
        SWE = SWE_out, ET = ET_out, Sd = Sd_out, SF = SF_out,
        dates = data$date, nse = nse, warmup = warmup,
        m = m, lam = lam)
-  }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3b.   LIGHTWEIGHT NSE-ONLY TOPMODEL (optimizer only — no arrays)
@@ -253,14 +240,14 @@ run_topmodel <- function(pars, data, topidx, pet_pre = NULL) {
 # ═══════════════════════════════════════════════════════════════════════════════
 topmodel_nse_only <- function(par_vec, par_names, P, tavg, obs, pet,
                               topidx, n, warmup, lower, upper) {
-
+  
   if (any(!is.finite(par_vec))) return(1e6)
   if (any(par_vec < lower) || any(par_vec > upper)) return(1e6)
-
+  
   qs0 <- par_vec[1]; lnTe <- par_vec[2]; m <- par_vec[3]; Sr0 <- par_vec[4]
   Srmax <- par_vec[5]; td <- par_vec[6]; snow_t <- par_vec[7]; snow_mf <- par_vec[8]
   if (td < 0.1) td <- 0.1
-
+  
   twi_vals <- topidx[, 1]; twi_frac <- topidx[, 2]
   lam <- sum(twi_vals * twi_frac)
   twi_thresh <- m * (twi_vals - lam)
@@ -268,20 +255,20 @@ topmodel_nse_only <- function(par_vec, par_names, P, tavg, obs, pet,
   tts <- twi_thresh[si]
   tfc <- cumsum(twi_frac[si])
   nc  <- length(tts)
-
+  
   Sd <- -m * (log(max(qs0, 1e-10)) - lnTe)
   if (Sd > 2000) Sd <- 2000; if (Sd < 0) Sd <- 0
   Srz <- Sr0; Suz <- 0; SWE <- 0
   Te <- exp(lnTe); td_m <- td / m
-
+  
   obs_after <- obs[(warmup + 1):n]
   obs_ok <- obs_after[!is.na(obs_after)]
   if (length(obs_ok) < 30) return(1e6)
   obs_mean <- mean(obs_ok)
-
+  
   # Accumulate residuals without storing arrays
   ss_res <- 0; ss_obs <- 0; n_ok <- 0L
-
+  
   for (t in seq_len(n)) {
     tv <- tavg[t]
     if (tv <= snow_t) {
@@ -291,7 +278,7 @@ topmodel_nse_only <- function(par_vec, par_names, P, tavg, obs, pet,
       if (ma > SWE) ma <- SWE
       SWE <- SWE - ma; rain <- P[t] + ma
     }
-
+    
     if (Sd >= tts[1L]) { sf <- 0
     } else if (Sd < tts[nc]) { sf <- tfc[nc]
     } else {
@@ -302,24 +289,24 @@ topmodel_nse_only <- function(par_vec, par_names, P, tavg, obs, pet,
       }
       sf <- tfc[lo]
     }
-
+    
     infil <- (1 - sf) * rain
     Srz <- Srz - infil
     if (Srz < 0) { Suz <- Suz - Srz; Srz <- 0 }
     if (Srz < Srmax) { ae <- pet[t] * (1 - Srz / Srmax) } else { ae <- 0 }
     Srz <- Srz + ae; if (Srz > Srmax) Srz <- Srmax
-
+    
     if (Suz > 0 && Sd > 0) {
       quz <- Suz / (td_m * Sd); if (quz > Suz) quz <- Suz; Suz <- Suz - quz
     } else { quz <- 0 }
-
+    
     Sd <- Sd - quz; if (Sd < 0) Sd <- 0
     qb <- Te * exp(-Sd / m)
     if (qb > Sd + 50) qb <- Sd + 50; if (qb < 0) qb <- 0
     Sd <- Sd + qb; if (Sd < 0) Sd <- 0
-
+    
     qsim <- qb + sf * rain
-
+    
     # Only score post-warmup days with valid observations
     if (t > warmup) {
       o_t <- obs[t]
@@ -330,7 +317,7 @@ topmodel_nse_only <- function(par_vec, par_names, P, tavg, obs, pet,
       }
     }
   }
-
+  
   if (n_ok < 30 || ss_obs <= 0) return(1e6)
   -(1 - ss_res / ss_obs)  # negative NSE (optim() minimizes)
 }
@@ -342,20 +329,20 @@ topmodel_nse_only <- function(par_vec, par_names, P, tavg, obs, pet,
 # recent data (cal_years + 1 year warmup) to keep the run time reasonable.
 # ═══════════════════════════════════════════════════════════════════════════════
 optimize_params <- function(data, topidx, cal_years = 3) {
-
+  
   par_names <- c("qs0","lnTe","m","Sr0","Srmax","td","snow_t","snow_mf")
   lower <- c(0.01, -7,   5,  0,   5,  1, -2, 1)
   upper <- c(10,    5, 100, 50, 300, 60,  2, 6)
   names(lower) <- par_names
   names(upper) <- par_names
-
+  
   # Subset to calibration window (most recent cal_years + 1yr warmup)
   n_full   <- nrow(data)
   cal_days <- cal_years * 365 + 365
   if (n_full > cal_days) {
     cal_data <- data[(n_full - cal_days + 1):n_full, ]
   } else { cal_data <- data }
-
+  
   # Precompute vectors once & pass into each optim() call
   cal_n      <- nrow(cal_data)
   cal_P      <- cal_data$precip_mm
@@ -363,7 +350,7 @@ optimize_params <- function(data, topidx, cal_years = 3) {
   cal_obs    <- cal_data$flow_mm
   cal_pet    <- hamon_pet(cal_tavg, yday(cal_data$date))
   cal_warmup <- min(365, cal_n - 1)
-
+  
   obj_fast <- function(par_vec) {
     tryCatch(
       topmodel_nse_only(par_vec, par_names, cal_P, cal_tavg, cal_obs,
@@ -371,17 +358,17 @@ optimize_params <- function(data, topidx, cal_years = 3) {
       error = function(e) 1e6
     )
   }
-
+  
   # Three starting points to avoid getting stuck in a local minimum
   starts <- list(
     c(qs0 = 1.0, lnTe =  1.0, m = 30, Sr0 =  2, Srmax = 100, td = 10, snow_t =  0.0, snow_mf = 3.0),
     c(qs0 = 2.0, lnTe =  2.0, m = 20, Sr0 =  1, Srmax =  60, td =  5, snow_t =  1.0, snow_mf = 2.0),
     c(qs0 = 3.0, lnTe = -2.0, m = 40, Sr0 = 10, Srmax = 150, td = 20, snow_t = -0.5, snow_mf = 3.5)
   )
-
+  
   best_val  <- Inf
   best_pars <- starts[[1]]
-
+  
   for (i in seq_along(starts)) {
     if (!is.null(progress_fn))
       progress_fn(i, length(starts), sprintf("Start %d of %d \u2026", i, length(starts)))
@@ -393,53 +380,53 @@ optimize_params <- function(data, topidx, cal_years = 3) {
       best_val <- opt$value; best_pars <- opt$par
     }
   }
-
+  
   names(best_pars) <- par_names
   pmax(pmin(best_pars, upper), lower) # clamp to valid parameter bounds
 }
 
-# # ═══════════════════════════════════════════════════════════════════════════════
-# # 5.  PRECOMPUTE AT STARTUP
-# #
-# # These objects are created once the app launches and are shared across all
-# # user sessions (global scope in Shiny = computed before server() runs).
-# # ═══════════════════════════════════════════════════════════════════════════════
-# message("Loading daily data ...")
-# ALL_DATA <- load_daily_data()
-# message(sprintf("  %d records: %s to %s",
-#                 nrow(ALL_DATA), min(ALL_DATA$date), max(ALL_DATA$date)))
-# 
-# message("Computing TWI ...")
-# TWI_PRECOMPUTED <- file.path(DATA_DIR, "twi_precomputed.tif")
-# if (file.exists(TWI_PRECOMPUTED)) {
-#   # Fast path: precomputed file exists (always the case on shinyapps.io)
-#   message("  Loading precomputed TWI ...")
-#   TWI_RASTER <- rast(TWI_PRECOMPUTED)
-# } else {
-#   # Slow path: compute from scratch locally (requires WBT)
-#   if (!HAS_WHITEBOX) stop("WhiteBox is not installed and there is no precomputed TWI found.
-#                           Run precompute_twi.R first.")
-#   message("  Computing via WhiteBox Tools (FD8) ...")
-#   TWI_RASTER <- compute_twi_raster()
-#   writeRaster(TWI_RASTER, TWI_PRECOMPUTED, overwrite = TRUE)
-#   message("  Saved precomputed TWI to ", TWI_PRECOMPUTED)
-# }
-# 
-# # Build the TOPIDX (16 TWI classes → area fractions)
-# TOPIDX     <- make_topidx_classes(TWI_RASTER, n_classes = 16)
-# TWI_LAM    <- sum(TOPIDX[, 1] * TOPIDX[, 2])  # mean TWI (lambda)
-# message("  Lambda (mean TWI): ", round(TWI_LAM, 2))
-# 
-# # Load watershed boundary & re-project to match the TWI raster CRS
-# WS_SF_NATIVE <- st_read(SHP_F, quiet = TRUE)
-# WS_SF_NATIVE <- st_transform(WS_SF_NATIVE, crs(TWI_RASTER))
-# 
-# # Clip DEM to watershed boundary for drawing elevation contours on maps
-# DEM_WS <- mask(crop(rast(DEM_F),
-#                      vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F))))),
-#                vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F)))))
-# 
-# message("  Startup complete.")
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5.  PRECOMPUTE AT STARTUP
+#
+# These objects are created once the app launches and are shared across all
+# user sessions (global scope in Shiny = computed before server() runs).
+# ═══════════════════════════════════════════════════════════════════════════════
+message("Loading daily data ...")
+ALL_DATA <- load_daily_data()
+message(sprintf("  %d records: %s to %s",
+                nrow(ALL_DATA), min(ALL_DATA$date), max(ALL_DATA$date)))
+
+message("Computing TWI ...")
+TWI_PRECOMPUTED <- file.path(DATA_DIR, "twi_precomputed.tif")
+if (file.exists(TWI_PRECOMPUTED)) {
+  # Fast path: precomputed file exists (always the case on shinyapps.io)
+  message("  Loading precomputed TWI ...")
+  TWI_RASTER <- rast(TWI_PRECOMPUTED)
+} else {
+  # Slow path: compute from scratch locally (requires WBT)
+  if (!HAS_WHITEBOX) stop("WhiteBox is not installed and there is no precomputed TWI found.
+                          Run precompute_twi.R first.")
+  message("  Computing via WhiteBox Tools (FD8) ...")
+  TWI_RASTER <- compute_twi_raster()
+  writeRaster(TWI_RASTER, TWI_PRECOMPUTED, overwrite = TRUE)
+  message("  Saved precomputed TWI to ", TWI_PRECOMPUTED)
+}
+
+# Build the TOPIDX (16 TWI classes → area fractions)
+TOPIDX     <- make_topidx_classes(TWI_RASTER, n_classes = 16)
+TWI_LAM    <- sum(TOPIDX[, 1] * TOPIDX[, 2])  # mean TWI (lambda)
+message("  Lambda (mean TWI): ", round(TWI_LAM, 2))
+
+# Load watershed boundary & re-project to match the TWI raster CRS
+WS_SF_NATIVE <- st_read(SHP_F, quiet = TRUE)
+WS_SF_NATIVE <- st_transform(WS_SF_NATIVE, crs(TWI_RASTER))
+
+# Clip DEM to watershed boundary for drawing elevation contours on maps
+DEM_WS <- mask(crop(rast(DEM_F),
+                    vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F))))),
+               vect(st_transform(WS_SF_NATIVE, crs(rast(DEM_F)))))
+
+message("  Startup complete.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPER: snap a value to the nearest slider step
@@ -450,7 +437,7 @@ snap_to_step <- function(val, min_val, max_val, step) {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5.  SHINY UI
+# 6.  SHINY UI
 # ═══════════════════════════════════════════════════════════════════════════════
 # Custom CSS for the NSE score box & sidebar parameter groups
 app_css <- "
@@ -478,11 +465,11 @@ ui <- page_sidebar(
   title = "HBEF Watershed 3 \u2014 TOPMODEL Explorer",
   theme = bs_theme(bootswatch = "flatly", version = 5),
   tags$head(tags$style(HTML(app_css))),
-
+  
   # ── Left sidebar: simulation controls & parameter sliders ────────────────
   sidebar = sidebar(
     width = 330,
-
+    
     # Year range selector: filters ALL_DATA to the chosen window
     sliderInput("year_range", "Viewing Period",
                 min   = as.integer(format(min(ALL_DATA$date), "%Y")),
@@ -491,59 +478,60 @@ ui <- page_sidebar(
                 step  = 1, sep = "",
                 ticks = TRUE),
     helpText("Select the time window to view. The model runs on the selected period."),
-
+    
     actionButton("run_model", "\u25B6  Run Model",
                  class = "btn-success action-btn"),
-
-    # NSE score box (green/yellow/red based on the value) & an optimized parameter readout
+    
+    # NSE score box (green/yellow/red based on the value) & an optimized
+    # parameter readout
     uiOutput("nse_display"),
     uiOutput("opt_params_display"),
-
+    
     # Subsurface parameters: control baseflow & drainage
     div(class = "pg",
-      h6("\u2193 Subsurface Flow Parameters"),
-      
-      helpText("Initial subsurface flow at time zero. Sets the starting saturation deficit."),
-      sliderInput("qs0",  "qs0 \u2013 init. flow (mm/d)",
-                  min = 0.01, max = 10, value = 5.5, step = 0.01),
-      
-      helpText("Log of soil transmissivity when fully saturated. Controls baseflow magnitude \u2014 higher = more baseflow."),
-      sliderInput("lnTe", "ln(Te) \u2013 transmissivity",
-                  min = -7, max = 5, value = 1.9, step = 0.1),
-      
-      helpText("Rate transmissivity declines with depth. Small m = flashy response; large m = slow drainage."),
-      sliderInput("m",    "m \u2013 decay param (mm)",
-                  min = 5, max = 100, value = 19, step = 1),
-      
-      helpText("Time delay for water to drain through the unsaturated zone to the water table."),
-      sliderInput("td",   "td \u2013 unsat. delay (days)",
-                  min = 1, max = 60, value = 3, step = 1),
+        h6("\u2193 Subsurface Flow Parameters"),
+        
+        helpText("Initial subsurface flow at time zero. Sets the starting saturation deficit."),
+        sliderInput("qs0",  "qs0 \u2013 init. flow (mm/d)",
+                    min = 0.01, max = 10, value = 5.5, step = 0.01),
+        
+        helpText("Log of soil transmissivity when fully saturated. Controls baseflow magnitude \u2014 higher = more baseflow."),
+        sliderInput("lnTe", "ln(Te) \u2013 transmissivity",
+                    min = -7, max = 5, value = 1.9, step = 0.1),
+        
+        helpText("Rate transmissivity declines with depth. Small m = flashy response; large m = slow drainage."),
+        sliderInput("m",    "m \u2013 decay param (mm)",
+                    min = 5, max = 100, value = 19, step = 1),
+        
+        helpText("Time delay for water to drain through the unsaturated zone to the water table."),
+        sliderInput("td",   "td \u2013 unsat. delay (days)",
+                    min = 1, max = 60, value = 3, step = 1),
     ),
-
+    
     # Root zone parameters: control ET & soil moisture
     div(class = "pg",
-      h6("\U0001F331 Root Zone  & Evapotranspiration"),
-      
-      helpText("Initial root zone storage deficit. How dry the soil is at the start of simulation."),
-      sliderInput("Sr0",   "Sr0 \u2013 init. deficit (mm)",
-                  min = 0, max = 50, value = 2.5, step = 0.5),
-      helpText("Maximum water the root zone can hold before draining. Controls ET \u2014 larger = more ET in summer."),
-      sliderInput("Srmax", "Srmax \u2013 max capacity (mm)",
-                  min = 5, max = 300, value = 65, step = 5),
+        h6("\U0001F331 Root Zone  & Evapotranspiration"),
+        
+        helpText("Initial root zone storage deficit. How dry the soil is at the start of simulation."),
+        sliderInput("Sr0",   "Sr0 \u2013 init. deficit (mm)",
+                    min = 0, max = 50, value = 2.5, step = 0.5),
+        helpText("Maximum water the root zone can hold before draining. Controls ET \u2014 larger = more ET in summer."),
+        sliderInput("Srmax", "Srmax \u2013 max capacity (mm)",
+                    min = 5, max = 300, value = 65, step = 5),
     ),
-
+    
     # Snow parameters: degree-day accumulation & melt
     div(class = "pg",
-      h6("\u2744 Snow Accumulation & Melt"),
-      
-      helpText("Temperature threshold: below this, precipitation falls as snow."),
-      sliderInput("snow_t",  "Tmelt (\u00B0C)",
-                  min = -2, max = 2, value = -0.7, step = 0.1),
-      helpText("Degree-day melt factor. mm of snowmelt per degree above Tmelt per day."),
-      sliderInput("snow_mf", "Melt coeff (mm/\u00B0C/d)",
-                  min = 1, max = 6, value = 3.4, step = 0.1),
+        h6("\u2744 Snow Accumulation & Melt"),
+        
+        helpText("Temperature threshold: below this, precipitation falls as snow."),
+        sliderInput("snow_t",  "Tmelt (\u00B0C)",
+                    min = -2, max = 2, value = -0.7, step = 0.1),
+        helpText("Degree-day melt factor. mm of snowmelt per degree above Tmelt per day."),
+        sliderInput("snow_mf", "Melt coeff (mm/\u00B0C/d)",
+                    min = 1, max = 6, value = 3.4, step = 0.1),
     ),
-
+    
     actionButton("optimize", "\u26A1  Optimize Parameters",
                  class = "btn-primary action-btn"),
     helpText("Automatically finds the best parameter values by minimizing the
@@ -551,7 +539,7 @@ ui <- page_sidebar(
              Nelder-Mead algorithm, a derivative-free method that works well 
              for non-smooth hydrological models.")
   ),
-
+  
   # ── Main panel: tabbed plots ───────────────────────────────────────────────
   navset_card_tab(
     nav_panel("Model Output",    plotlyOutput("model_output", height = "700px")),
@@ -576,14 +564,14 @@ ui <- page_sidebar(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6.  SHINY SERVER
+# 7.  SHINY SERVER
 # ═══════════════════════════════════════════════════════════════════════════════
 server <- function(input, output, session) {
-
+  
   # Reactive values shared across observers & outputs
   model_result   <- reactiveVal(NULL)  # stores the last run_topmodel() result
   opt_params_txt <- reactiveVal(NULL)  # stores formatted optimized param string
-
+  
   # Filter ALL_DATA to the selected year range
   sim_data <- reactive({
     req(input$year_range)
@@ -593,26 +581,26 @@ server <- function(input, output, session) {
     validate(need(nrow(d) > 400, "Select a wider date range (> 1 year)."))
     d
   })
-
+  
   # Bundle current slider values into a named parameter vector
   current_pars <- reactive({
     c(qs0 = input$qs0, lnTe = input$lnTe, m = input$m,
       Sr0 = input$Sr0, Srmax = input$Srmax, td = input$td,
       snow_t = input$snow_t, snow_mf = input$snow_mf)
   })
-
+  
   # ── Run Model button ────────────────────────────────────────────────────────
   observeEvent(input$run_model, {
     d <- tryCatch(sim_data(), error = function(e) NULL)
     
     if (is.null(d)) {
       showNotification("Check date range.", type = "error"); return()
-      }
+    }
     res <- tryCatch(run_topmodel(current_pars(), d, TOPIDX),
                     error = function(e) {
                       showNotification(paste("Error:", e$message),
                                        type = "error"); NULL
-                      })
+                    })
     
     if (!is.null(res)) {
       model_result(res)
@@ -620,7 +608,7 @@ server <- function(input, output, session) {
       showNotification(sprintf("NSE = %s", nse_str), type = "message", duration = 3)
     }
   }, ignoreNULL = TRUE, ignoreInit = FALSE)
-
+  
   # ── Auto-run on first load so that the plots aren't blank at start-up ────────
   ran_once <- reactiveVal(FALSE)
   observe({
@@ -633,13 +621,13 @@ server <- function(input, output, session) {
       ran_once(TRUE)
     }
   })
-
+  
   # ── Optimize button ─────────────────────────────────────────────────────────
   observeEvent(input$optimize, {
     data <- tryCatch(sim_data(), error = function(e) NULL)
     if (is.null(data)) {
       showNotification("Check date range.", type = "error"); return()
-      }
+    }
     
     showNotification("Optimizing \u2026 Start 1 of 3",
                      type = "message", duration = NULL, id = "opt_prog")
@@ -650,7 +638,7 @@ server <- function(input, output, session) {
     })
     
     removeNotification("opt_prog")
-
+    
     # Push the optimized values back to the sliders
     updateSliderInput(session, "qs0",     value = snap_to_step(best["qs0"],     0.01, 10,  0.01))
     updateSliderInput(session, "lnTe",    value = snap_to_step(best["lnTe"],    -7,   5,   0.1))
@@ -660,14 +648,14 @@ server <- function(input, output, session) {
     updateSliderInput(session, "Srmax",   value = snap_to_step(best["Srmax"],    5,   300,  5))
     updateSliderInput(session, "snow_t",  value = snap_to_step(best["snow_t"],  -2,   2,    0.1))
     updateSliderInput(session, "snow_mf", value = snap_to_step(best["snow_mf"],  1,   6,    0.1))
-
+    
     # Display exact (un-snapped) optimized values for reference
     opt_params_txt(sprintf(
       "qs0=%.3f  lnTe=%.2f  m=%.1f\nSr0=%.1f  Srmax=%.1f  td=%.1f\nTmelt=%.2f  Melt=%.2f",
       best["qs0"], best["lnTe"], best["m"],
       best["Sr0"], best["Srmax"], best["td"],
       best["snow_t"], best["snow_mf"]))
-
+    
     # Re-run the full simulation with the exact optimized parameters
     res <- tryCatch(run_topmodel(best, data, TOPIDX), error = function(e) NULL)
     if (!is.null(res)) {
@@ -677,19 +665,19 @@ server <- function(input, output, session) {
                        type = "message", duration = 5)
     }
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
-
+  
   # ── NSE score box: green ≥ 0.5, yellow ≥ 0, red < 0 ───────────────────────
   output$nse_display <- renderUI({
     res <- model_result()
     if (is.null(res) || is.na(res$nse) || !is.finite(res$nse)) {
       div(class = "nse-box nse-bad", "NSE: \u2014")
-      } else {
-        cls <- if (res$nse >= 0.5) "nse-good"
-        else if (res$nse >= 0) "nse-ok" else "nse-bad"
-        div(class = paste("nse-box", cls), sprintf("NSE = %.3f", res$nse))
-        }
-    })
-
+    } else {
+      cls <- if (res$nse >= 0.5) "nse-good"
+      else if (res$nse >= 0) "nse-ok" else "nse-bad"
+      div(class = paste("nse-box", cls), sprintf("NSE = %.3f", res$nse))
+    }
+  })
+  
   # ── Show exact optimized parameter values below the NSE box ────────────────
   output$opt_params_display <- renderUI({
     txt <- opt_params_txt()
@@ -698,7 +686,7 @@ server <- function(input, output, session) {
         tags$strong("Optimized values:"), tags$br(),
         tags$pre(style = "margin:2px 0 0 0; white-space:pre-wrap;", txt))
   })
-
+  
   # ════════════════════════════════════════════════════════════════════════════
   # MODEL OUTPUT: stacked subplots with shared x-axis
   # ════════════════════════════════════════════════════════════════════════════
@@ -760,8 +748,8 @@ server <- function(input, output, session) {
              showlegend = FALSE,
              hovermode = "x unified",
              margin = list(t = 50, b = 30, l = 60))
-    })
-
+  })
+  
   # Observed vs simulated scatter: perfect model would follow the 1:1 line
   output$scatter <- renderPlotly({
     res <- model_result()
@@ -781,7 +769,7 @@ server <- function(input, output, session) {
              yaxis = list(title = "Simulated (mm/d)"),
              showlegend = FALSE, margin = list(t = 50))
   })
-
+  
   # Flow Duration Curve: log-scale exceedance plot; shows high/low flow fit
   output$fdc <- renderPlotly({
     res <- model_result()
@@ -801,7 +789,7 @@ server <- function(input, output, session) {
              yaxis = list(title = "Discharge (mm/d)", type = "log"),
              legend = list(orientation = "h", y = -0.12), margin = list(t = 50))
   })
-
+  
   # Snow Water Equivalent and actual ET on dual y-axes
   output$snow_et <- renderPlotly({
     res <- model_result()
@@ -827,7 +815,7 @@ server <- function(input, output, session) {
              legend = list(orientation = "h", y = -0.12),
              hovermode = "x unified", margin = list(t = 50))
   })
-
+  
   # Static TWI map: shows landscape wetness potential (fixed, not model-dependent)
   output$twi_map <- renderPlot({
     par(mar = c(2, 2, 3, 4), bg = "white")
@@ -838,7 +826,7 @@ server <- function(input, output, session) {
          cex.main = 1.3)
     plot(st_geometry(WS_SF_NATIVE), add = TRUE,
          border = "#222222", lwd = 2.5, col = NA)
-
+    
     # Elevation contour lines
     contour(raster::raster(DEM_WS), add = TRUE,
             nlevels = 10, col = adjustcolor("#333333", alpha.f = 0.5),
@@ -846,7 +834,7 @@ server <- function(input, output, session) {
     mtext("Contour elevation is in meters", side = 1, line = 0.5,
           cex = 0.8, col = "#666666")
   }, res = 120)
-
+  
   # Update the saturation map day slider range when a new model result is available
   observe({
     res <- model_result()
@@ -854,7 +842,7 @@ server <- function(input, output, session) {
     n_days <- length(res$Sd)
     updateSliderInput(session, "sat_day", min = 1, max = n_days, value = 1)
   })
-
+  
   # Animated saturation map: binary saturated/unsaturated based on a daily
   # mean deficit vs. the TWI threshold for each cell. Cells with TWI >= 
   # threshold are predicted to be at or above the water table (saturated).
@@ -895,7 +883,7 @@ server <- function(input, output, session) {
          cex.main = 1.2)
     plot(st_geometry(WS_SF_NATIVE), add = TRUE,
          border = "#222222", lwd = 2.5, col = NA)
-
+    
     # Elevation contour lines for terrain context
     contour(raster::raster(DEM_WS), add = TRUE,
             nlevels = 10, col = adjustcolor("#555555", alpha.f = 0.5),
@@ -908,7 +896,7 @@ server <- function(input, output, session) {
     mtext("Contour elevations in meters", side = 1, line = 0.5,
           cex = 0.7, col = "#666666")
   }, res = 110)
-
+  
   # Discharge time series with marker showing current day
   output$sat_discharge <- renderPlotly({
     res <- model_result()
@@ -960,7 +948,6 @@ server <- function(input, output, session) {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 7.  LAUNCH
+# 8.  LAUNCH
 # ═══════════════════════════════════════════════════════════════════════════════
 shinyApp(ui, server)
-
