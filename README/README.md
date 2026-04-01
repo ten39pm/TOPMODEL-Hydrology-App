@@ -36,6 +36,7 @@ This app simulates streamflow for the HBEF Watershed 3 using TOPMODEL, a topogra
 project/
 ├── app.R                  # Main Shiny application
 ├── precompute_twi.R       # Must be run once before launching the app
+├── precompute_all.R       # Must be run once before launching the app
 ├── Data/
 │   ├── dem_10m.tif                          # 10-meter resolution DEM
 │   ├── Watershed3HB.shp                     # Watershed boundary polygon
