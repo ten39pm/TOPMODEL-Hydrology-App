@@ -1,0 +1,13 @@
+name: EDSCapstone
+title: EDSCapstone
+username: ten39pm
+account: ten39pm
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 17020241
+bundleId: 11791412
+url: https://ten39pm.shinyapps.io/EDSCapstone/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: precompute_data.R|README.md
