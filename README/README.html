@@ -354,411 +354,1172 @@ display: none;
 
 <div id="hbef-watershed-3-topmodel-explorer" class="section level1">
 <h1>HBEF Watershed 3 — TOPMODEL Explorer</h1>
-<p>A Shiny web application for running TOPMODEL, a rainfall-runoff model
-that predicts streamflow based on watershed topography, soil properties,
-and climate inputs. Built for the <strong>Hubbard Brook Experimental
-Forest (HBEF) Watershed 3</strong> as part of the EDS Capstone
-project.</p>
-<p><strong>Authors:</strong> Samuel Handel, Kaelyn Harvey, Max
-Hughes</p>
+<p><strong>EDS Capstone Project | Virginia Tech</strong> Samuel Handel ·
+Kaelyn Harvey · Max Hughes</p>
 <hr />
 <div id="table-of-contents" class="section level2">
 <h2>Table of Contents</h2>
+<ol style="list-style-type: decimal">
+<li><a href="#id_1-introduction--motivation">Introduction &amp;
+Motivation</a></li>
+<li><a href="#id_2-application-overview">Application Overview</a></li>
+<li><a href="#id_3-summary-of-functions">Summary of Functions</a></li>
+<li><a href="#id_4-how-to-use-the-app">How to Use the App</a>
 <ul>
-<li><a href="#overview">Overview</a></li>
-<li><a href="#project-structure">Project Structure</a></li>
-<li><a href="#prerequisites">Prerequisites</a></li>
-<li><a href="#id_%EF%B8%8F-before-running-the-app-two-step-precompute">⚠️
-Before Running the App: Two-Step Precompute</a>
-<ul>
-<li><a href="#step-1--precompute_twir">Step 1 —
-precompute_twi.R</a></li>
-<li><a href="#step-2--precompute_allr">Step 2 —
-precompute_all.R</a></li>
-</ul></li>
+<li><a href="#setup--precompute-workflow">Setup &amp; Precompute
+Workflow</a></li>
 <li><a href="#running-the-app">Running the App</a></li>
-<li><a href="#using-the-app">Using the App</a></li>
-<li><a href="#data-requirements">Data Requirements</a></li>
-</ul>
-<hr />
-</div>
-<div id="overview" class="section level2">
-<h2>Overview</h2>
-<p>This app simulates streamflow for HBEF Watershed 3 using TOPMODEL, a
-topography-driven hydrological model. It allows users to:</p>
+<li><a href="#sidebar-controls">Sidebar Controls</a></li>
+<li><a href="#plot-tabs">Plot Tabs</a></li>
+<li><a href="#custom-catchment-upload">Custom Catchment Upload</a></li>
+</ul></li>
+<li><a href="#id_5-libraries--package-versions">Libraries &amp; Package
+Versions</a></li>
+<li><a href="#id_6-data-used--metadata">Data Used &amp; Metadata</a>
 <ul>
-<li>Manually tune model parameters via interactive sliders</li>
-<li>Automatically calibrate parameters using the Nelder-Mead optimizer
-over a user-defined calibration window</li>
-<li>Load a custom catchment by uploading your own time series and TOPIDX
-files</li>
-<li>Visualize simulated vs. observed discharge, flow duration curves,
-and input forcing data</li>
-<li>Explore an animated <strong>saturation map</strong> showing which
-parts of the watershed are predicted to be saturated on any given day —
-click directly on the discharge plot to jump the map to that date</li>
-<li>View the Topographic Wetness Index (TWI) map and histogram with
-summary statistics</li>
-<li>Export all model output to a CSV file</li>
-</ul>
+<li><a href="#data-sources">Data Sources</a></li>
+<li><a href="#data-structure">Data Structure</a></li>
+<li><a href="#preprocessing">Preprocessing</a></li>
+</ul></li>
+<li><a href="#id_7-project-structure">Project Structure</a></li>
+<li><a href="#id_8-known-issues">Known Issues</a></li>
+<li><a href="#id_9-future-features">Future Features</a></li>
+<li><a href="#id_10-references--resources">References &amp;
+Resources</a></li>
+</ol>
 <hr />
 </div>
-<div id="project-structure" class="section level2">
-<h2>Project Structure</h2>
-<pre><code>project/
-├── app.R                    # Main Shiny application
-├── precompute_twi.R         # Step 1: compute TWI from raw DEM via WhiteboxTools
-├── precompute_all.R         # Step 2: convert spatial outputs to .rds files
-├── Data/
-│   ├── dem_10m.tif                          # 10-meter resolution DEM (input)
-│   ├── dem_ws_clipped.tif                   # DEM clipped to watershed (produced by Step 1)
-│   ├── Watershed3HB.shp                     # Watershed boundary shapefile (+ .dbf, .prj, .shx)
-│   ├── DailyWatershed.csv                   # Daily precipitation (W3)
-│   ├── HBEF_DailyStreamflow_1956-2024.csv   # Observed daily streamflow
-│   ├── HBEF_air_temp_daily.csv              # Daily air temperature
-│   ├── twi_precomputed.tif                  # Produced by Step 1
-│   ├── twi_matrix.rds                       # Produced by Step 2
-│   ├── twi_extent.rds                       # Produced by Step 2
-│   ├── dem_matrix.rds                       # Produced by Step 2
-│   ├── dem_extent.rds                       # Produced by Step 2
-│   ├── ws_boundary.rds                      # Produced by Step 2
-│   ├── topidx.rds                           # Produced by Step 2
-│   └── twi_lam.rds                          # Produced by Step 2
-└── README.md</code></pre>
+<div id="introduction-motivation" class="section level2">
+<h2>1. Introduction &amp; Motivation</h2>
+<p>Hydrological models are fundamental tools in environmental science,
+enabling researchers and land managers to understand how precipitation
+moves through a watershed — as streamflow, groundwater recharge,
+evapotranspiration, and soil storage. However, most operational
+hydrological models are implemented in static scripts or proprietary
+software, making them inaccessible to non-specialists and difficult to
+use interactively for exploration and education.</p>
+<p>This project addresses that gap by wrapping <strong>TOPMODEL</strong>
+(Beven &amp; Kirkby, 1979) — one of the most widely taught and used
+conceptual rainfall-runoff models — in an interactive Shiny web
+application. The app is built around <strong>Watershed 3 (W3) of the
+Hubbard Brook Experimental Forest (HBEF)</strong> in the White Mountains
+of New Hampshire, one of the longest-running and most thoroughly
+documented small watershed research sites in North America. HBEF has
+been continuously monitored since 1955, providing over 60 years of daily
+precipitation, streamflow, and air temperature records that make it
+ideal for hydrological model calibration and validation.</p>
+<p><strong>Why TOPMODEL?</strong> TOPMODEL is a semi-distributed,
+physically-based model that predicts streamflow by linking the
+watershed’s topographic structure — specifically the Topographic Wetness
+Index (TWI) — to spatial patterns of soil moisture and saturation.
+Unlike lumped models, TOPMODEL produces spatially explicit predictions
+of which areas of the landscape are saturated on any given day, making
+it well-suited for visualizing hydrological processes rather than just
+fitting discharge curves.</p>
+<p><strong>Why an interactive app?</strong> Interactive parameter
+exploration allows users to develop an intuitive understanding of how
+each model parameter controls the shape of the hydrograph — something
+that is difficult to convey through static figures or tables. The
+optimizer further accelerates learning by automatically finding
+parameter combinations that maximize model skill (Nash-Sutcliffe
+Efficiency), freeing users to focus on interpreting results rather than
+manual trial-and-error calibration.</p>
+<p>The app supports both the default HBEF dataset and user-uploaded
+custom catchments, making it a generalizable teaching and research tool
+beyond the specific HBEF context.</p>
 <hr />
 </div>
-<div id="prerequisites" class="section level2">
-<h2>Prerequisites</h2>
-<p>Install the following R packages before running anything:</p>
+<div id="application-overview" class="section level2">
+<h2>2. Application Overview</h2>
+<p>The app is built with <strong>R Shiny</strong> and consists of three
+scripts:</p>
+<table>
+<colgroup>
+<col width="33%" />
+<col width="33%" />
+<col width="33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Script</th>
+<th>Purpose</th>
+<th>When to run</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>precompute_twi.R</code></td>
+<td>Computes TWI from the raw DEM using WhiteboxTools</td>
+<td>Once, before first use</td>
+</tr>
+<tr class="even">
+<td><code>precompute_all.R</code></td>
+<td>Converts spatial outputs to <code>.rds</code> files for the app</td>
+<td>Once, after <code>precompute_twi.R</code></td>
+</tr>
+<tr class="odd">
+<td><code>app.R</code></td>
+<td>The main Shiny application</td>
+<td>Every session</td>
+</tr>
+</tbody>
+</table>
+<p>The precompute scripts are run locally once and produce a set of
+plain <code>.rds</code> files in <code>Data/</code>. The deployed app
+reads only these <code>.rds</code> files at startup — it does not
+require any spatial packages (<code>terra</code>, <code>sf</code>,
+<code>raster</code>) at runtime, which keeps the shinyapps.io deployment
+lean and avoids binary dependency issues.</p>
+<p>The model itself is implemented entirely in base R inside
+<code>app.R</code> with no external TOPMODEL package dependency. This
+gives full transparency over the equations and makes the code easier to
+modify and extend.</p>
+<hr />
+</div>
+<div id="summary-of-functions" class="section level2">
+<h2>3. Summary of Functions</h2>
+<p>All core functions are defined in <code>app.R</code>. The precompute
+scripts contain standalone processing code without functions (except
+where noted).</p>
+<hr />
+<div id="load_hbef_data" class="section level3">
+<h3><code>load_hbef_data()</code></h3>
+<p><strong>File:</strong> <code>app.R</code> | <strong>Section
+1</strong></p>
+<p>Reads and merges the three HBEF input time series: precipitation,
+streamflow, and air temperature. Filters precipitation to Watershed 3,
+filters streamflow to <code>WS == 3</code>, restricts temperature to
+stations STA14 and STA17, and inner-joins all three on date. Missing
+precipitation values are filled with zero; missing temperature values
+are linearly interpolated between valid points.</p>
+<p><strong>Returns:</strong> A data frame with columns
+<code>date</code>, <code>precip_mm</code>, <code>flow_mm</code>,
+<code>tavg</code>.</p>
+<hr />
+</div>
+<div id="hamon_pettavg-doy-lat_deg" class="section level3">
+<h3><code>hamon_pet(tavg, doy, lat_deg)</code></h3>
+<p><strong>File:</strong> <code>app.R</code> | <strong>Section
+2</strong></p>
+<p>Estimates daily potential evapotranspiration (PET) using the Hamon
+(1961) equation. PET is computed from the daily mean air temperature and
+the astronomical day length at the watershed latitude. Returns zero on
+days with mean temperature at or below 0°C.</p>
+<p><strong>Arguments:</strong> - <code>tavg</code> — daily mean air
+temperature (°C) - <code>doy</code> — day of year (integer 1–365/366) -
+<code>lat_deg</code> — watershed latitude in decimal degrees</p>
+<p><strong>Returns:</strong> A numeric vector of daily PET values
+(mm/day).</p>
+<p><strong>Equation:</strong> &gt; PET = 0.1651 × Daylight × e_sat / (T
++ 273.3) × 29.8</p>
+<p>where daylight is computed from the sunset hour angle at the given
+latitude.</p>
+<hr />
+</div>
+<div id="run_topmodelpars-data-topidx-lat_deg-spinup_days" class="section level3">
+<h3><code>run_topmodel(pars, data, topidx, lat_deg, spinup_days)</code></h3>
+<p><strong>File:</strong> <code>app.R</code> | <strong>Section
+3</strong></p>
+<p>Full daily TOPMODEL simulation. Implements the six core process
+components in a daily time-step loop:</p>
+<ol style="list-style-type: decimal">
+<li><strong>Snow</strong> — degree-day accumulation and melt</li>
+<li><strong>Saturated area</strong> — binary search on the sorted TWI
+threshold lookup table</li>
+<li><strong>Overland flow</strong> — saturation-excess runoff on the wet
+fraction</li>
+<li><strong>Root zone</strong> — water balance and actual ET via Hamon
+PET</li>
+<li><strong>Unsaturated zone</strong> — time-delayed drainage to the
+water table</li>
+<li><strong>Baseflow</strong> — exponential decay from saturated zone
+transmissivity</li>
+</ol>
+<p>The initial saturation deficit is inferred from the first non-zero
+observed flow record rather than being a free parameter, reducing the
+number of parameters and the risk of a poor starting state.</p>
+<p><strong>Arguments:</strong> - <code>pars</code> — named numeric
+vector of model parameters (see <a href="#sidebar-controls">Parameter
+Groups</a>) - <code>data</code> — daily data frame from
+<code>load_hbef_data()</code> or a custom upload - <code>topidx</code> —
+2-column matrix of TWI class midpoints and area fractions -
+<code>lat_deg</code> — watershed latitude (decimal degrees) for Hamon
+PET - <code>spinup_days</code> — number of warm-up days excluded from
+NSE scoring (default 365)</p>
+<p><strong>Returns:</strong> A named list containing daily time series
+for all model outputs (<code>Qsim</code>, <code>Qobs</code>,
+<code>Qb</code>, <code>Qof</code>, <code>ET</code>, <code>SWE</code>,
+<code>Sd</code>, <code>SF</code>), model dates, NSE score, warm-up
+length, and the mean TWI lambda.</p>
+<hr />
+</div>
+<div id="topmodel_nsepv-p-tavg-obs-pet-topidx-n-warmup-lo-up" class="section level3">
+<h3><code>topmodel_nse(pv, P, tavg, obs, pet, topidx, n, warmup, lo, up)</code></h3>
+<p><strong>File:</strong> <code>app.R</code> | <strong>Section
+3b</strong></p>
+<p>Lightweight version of <code>run_topmodel()</code> used exclusively
+by the optimizer. Implements identical TOPMODEL physics but skips
+storing daily output arrays, accumulating only the NSE numerator and
+denominator on-the-fly. Returns negative NSE (for minimization by
+<code>optim()</code>). Returns <code>1e6</code> for out-of-bounds or
+non-finite parameter vectors.</p>
+<hr />
+</div>
+<div id="optimize_paramsdata-topidx-lat_deg-cal_start-cal_end-spinup_days-progress_fn" class="section level3">
+<h3><code>optimize_params(data, topidx, lat_deg, cal_start, cal_end, spinup_days, progress_fn)</code></h3>
+<p><strong>File:</strong> <code>app.R</code> | <strong>Section
+4</strong></p>
+<p>Runs Nelder-Mead optimization (<code>optim()</code>) from three
+different parameter starting points over a user-defined calibration
+window. Keeps the result with the highest NSE across all three starts.
+The calibration window subsets the data before calling
+<code>topmodel_nse()</code>, which keeps run time manageable. Parameter
+bounds are enforced both inside the objective function and by clamping
+the final result.</p>
+<p><strong>Optimized parameters:</strong> <code>ln(Te)</code>,
+<code>m</code>, <code>Srmax</code>, <code>td</code>,
+<code>snow_t</code>, <code>snow_mf</code></p>
+<p><strong>Starting points (three):</strong></p>
+<table>
+<thead>
+<tr class="header">
+<th>Start</th>
+<th>ln(Te)</th>
+<th>m</th>
+<th>Srmax</th>
+<th>td</th>
+<th>Tmelt</th>
+<th>Melt</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>2.0</td>
+<td>23</td>
+<td>68</td>
+<td>1</td>
+<td>−0.7</td>
+<td>2.9</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>1.0</td>
+<td>30</td>
+<td>100</td>
+<td>10</td>
+<td>0.0</td>
+<td>3.0</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>−2.0</td>
+<td>40</td>
+<td>150</td>
+<td>20</td>
+<td>−0.5</td>
+<td>3.5</td>
+</tr>
+</tbody>
+</table>
+<hr />
+</div>
+<div id="compute_nseres-start_date-end_date" class="section level3">
+<h3><code>compute_nse(res, start_date, end_date)</code></h3>
+<p><strong>File:</strong> <code>app.R</code> | <strong>Section 4
+(helper)</strong></p>
+<p>Computes Nash-Sutcliffe Efficiency over any arbitrary date window
+from an existing model result. Used to display both calibration-period
+NSE and viewing-window NSE in the plot title.</p>
+<hr />
+</div>
+<div id="snapval-mn-mx-step" class="section level3">
+<h3><code>snap(val, mn, mx, step)</code></h3>
+<p><strong>File:</strong> <code>app.R</code> | <strong>Section 4
+(helper)</strong></p>
+<p>Rounds a continuous value (e.g., from <code>optim()</code>) to the
+nearest slider step increment so that <code>updateSliderInput()</code>
+places the slider on a valid tick mark.</p>
+<hr />
+</div>
+<div id="make_topidx_classestwi_raster-n_classes-precompute-only" class="section level3">
+<h3><code>make_topidx_classes(twi_raster, n_classes)</code>
+<em>(precompute only)</em></h3>
+<p><strong>File:</strong> <code>precompute_twi.R</code> |
+<strong>Section 4</strong></p>
+<p>Converts a TWI raster into a TOPIDX lookup table by binning cell
+values into <code>n_classes</code> histogram classes and computing the
+area fraction in each class. Returns a 2-column matrix with columns
+<code>twi</code> (class midpoints) and <code>frac</code> (area fractions
+summing to 1).</p>
+<hr />
+</div>
+</div>
+<div id="how-to-use-the-app" class="section level2">
+<h2>4. How to Use the App</h2>
+<div id="setup-precompute-workflow" class="section level3">
+<h3>Setup &amp; Precompute Workflow</h3>
+<p>Both precompute scripts must be run <strong>once</strong> before
+launching the app. They require the raw input files in
+<code>Data/</code> and produce the <code>.rds</code> files the app
+depends on.</p>
+<div id="prerequisites" class="section level4">
+<h4>Prerequisites</h4>
+<p>Install all required R packages:</p>
 <pre class="r"><code>install.packages(c(
-  &quot;shiny&quot;, &quot;bslib&quot;, &quot;plotly&quot;, &quot;dplyr&quot;, &quot;lubridate&quot;,  # app dependencies
-  &quot;whitebox&quot;, &quot;terra&quot;, &quot;sf&quot;,                           # Step 1 (precompute_twi.R)
-  &quot;raster&quot;                                             # Step 2 (precompute_all.R)
+  # App dependencies
+  &quot;shiny&quot;, &quot;bslib&quot;, &quot;plotly&quot;, &quot;dplyr&quot;, &quot;lubridate&quot;,
+  # Precompute dependencies (not needed by the deployed app)
+  &quot;terra&quot;, &quot;sf&quot;, &quot;whitebox&quot;, &quot;raster&quot;
 ))</code></pre>
-<p>WhiteboxTools (WBT) also requires a one-time binary installation
-after the R package is installed:</p>
+<p>Initialize WhiteboxTools (one-time binary download):</p>
 <pre class="r"><code>whitebox::install_whitebox()</code></pre>
-<hr />
 </div>
-<div id="before-running-the-app-two-step-precompute" class="section level2">
-<h2>Before Running the App: Two-Step Precompute</h2>
-<p><strong>Both steps are required and must be completed in order before
-launching the app for the first time.</strong></p>
-<p>The app loads spatial data from lightweight <code>.rds</code> files
-at startup rather than reading rasters or shapefiles directly. This
-means the deployed app on shinyapps.io requires <strong>no spatial
-packages</strong> (<code>terra</code>, <code>sf</code>,
-<code>raster</code>, etc.) at runtime, which avoids binary dependency
-issues and reduces startup time.</p>
-<p>The two precompute scripts produce all seven <code>.rds</code> files
-the app needs. Run them once, then you can launch or re-deploy the app
-as many times as you like without re-running them.</p>
-<hr />
-<div id="step-1-precompute_twi.r" class="section level3">
-<h3>Step 1 — <code>precompute_twi.R</code></h3>
-<p><strong>What it does:</strong> Computes the Topographic Wetness Index
-(TWI) from the raw 10-meter DEM using WhiteboxTools (WBT) and saves the
-result as <code>Data/twi_precomputed.tif</code>.</p>
-<p><strong>Run it:</strong></p>
+<div id="step-1-run-precompute_twi.r" class="section level4">
+<h4>Step 1 — Run <code>precompute_twi.R</code></h4>
+<p>Computes TWI from the raw 10m DEM using WhiteboxTools.</p>
 <pre class="r"><code>source(&quot;precompute_twi.R&quot;)</code></pre>
-<p>You will see progress messages as it works through each step:</p>
+<p>Expected output:</p>
 <pre><code>Loading DEM and watershed ...
 Breaching depressions ...
 FD8 flow accumulation ...
 Computing slope ...
 Computing TWI ...
-Done! Saved to: Data/twi_precomputed.tif
-You can now run precompute_all.R next.</code></pre>
-<p><strong>What it produces:</strong>
-<code>Data/twi_precomputed.tif</code></p>
-<p><strong>Processing steps inside the script:</strong> 1. Loads the 10m
-DEM and clips it to the Watershed 3 boundary 2. Breaches depressions in
-the DEM (fills flow-blocking sinks) using WBT 3. Computes FD8 flow
-accumulation (specific contributing area) 4. Computes slope in degrees
-5. Calculates TWI as <code>log(SCA / tan(slope))</code> and masks it to
-the watershed</p>
-<hr />
+Done! Saved to: Data/twi_precomputed.tif</code></pre>
 </div>
-<div id="step-2-precompute_all.r" class="section level3">
-<h3>Step 2 — <code>precompute_all.R</code></h3>
-<p><strong>What it does:</strong> Reads the TWI raster, clipped DEM, and
-watershed shapefile and converts them to plain R matrices and vectors
-saved as <code>.rds</code> files. The app reads these files at startup
-without needing any spatial packages.</p>
-<p><strong>Run it</strong> (after Step 1 is complete):</p>
+<div id="step-2-run-precompute_all.r" class="section level4">
+<h4>Step 2 — Run <code>precompute_all.R</code></h4>
+<p>Converts the TWI raster, clipped DEM, and watershed boundary into
+<code>.rds</code> files.</p>
 <pre class="r"><code>source(&quot;precompute_all.R&quot;)</code></pre>
-<p>You will see:</p>
+<p>Expected output:</p>
 <pre><code>Loading TWI raster ...
-  TWI raster: 245 rows x 189 cols, extent [...] x [...]
-Loading clipped DEM ...
-  DEM raster: 245 rows x 189 cols, elevation range 488.2 – 774.6 m
-Loading watershed shapefile ...
-  Watershed boundary: 312 vertices
+Loading and clipping DEM to watershed ...
+Loading watershed boundary ...
 Computing TWI classes (TOPIDX) ...
   16 TWI classes | lambda (mean TWI) = 7.431
 Saving .rds files to Data/ ...
-
-════════════════════════════════════════════
+Done! Saved to: Data/
+========================================
   DONE! Created 7 .rds files in Data/
-  Next step: deploy app.R to shinyapps.io
-  The app loads these .rds files at startup
-  and does NOT require raster, sf, or terra.
-════════════════════════════════════════════</code></pre>
-<p><strong>What it produces</strong> (7 files in
-<code>Data/</code>):</p>
-<table>
-<colgroup>
-<col width="50%" />
-<col width="50%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th>File</th>
-<th>Contents</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><code>twi_matrix.rds</code></td>
-<td>TWI raster as a 2D numeric matrix</td>
-</tr>
-<tr class="even">
-<td><code>twi_extent.rds</code></td>
-<td>Named vector <code>c(xmin, xmax, ymin, ymax)</code></td>
-</tr>
-<tr class="odd">
-<td><code>dem_matrix.rds</code></td>
-<td>Clipped DEM as a 2D numeric matrix</td>
-</tr>
-<tr class="even">
-<td><code>dem_extent.rds</code></td>
-<td>Named vector <code>c(xmin, xmax, ymin, ymax)</code></td>
-</tr>
-<tr class="odd">
-<td><code>ws_boundary.rds</code></td>
-<td>Watershed polygon as an (X, Y) coordinate matrix</td>
-</tr>
-<tr class="even">
-<td><code>topidx.rds</code></td>
-<td>16-class TWI histogram table (midpoints + area fractions)</td>
-</tr>
-<tr class="odd">
-<td><code>twi_lam.rds</code></td>
-<td>Area-weighted mean TWI scalar (lambda, λ)</td>
-</tr>
-</tbody>
-</table>
+========================================</code></pre>
 <hr />
 </div>
 </div>
-<div id="running-the-app" class="section level2">
-<h2>Running the App</h2>
-<p>Once all seven <code>.rds</code> files exist in <code>Data/</code>,
-launch the app:</p>
+<div id="running-the-app" class="section level3">
+<h3>Running the App</h3>
 <pre class="r"><code>shiny::runApp(&quot;app.R&quot;)</code></pre>
 <p>Or open <code>app.R</code> in RStudio and click <strong>Run
-App</strong>.</p>
+App</strong>. The app auto-runs the model on startup so all plots are
+populated immediately.</p>
 <hr />
 </div>
-<div id="using-the-app" class="section level2">
-<h2>Using the App</h2>
 <div id="sidebar-controls" class="section level3">
 <h3>Sidebar Controls</h3>
-<p><strong>Catchment selector</strong> — choose between the default HBEF
-Watershed 3 dataset or upload a custom catchment (see the <strong>Custom
-Data Help</strong> tab in the app for the required file formats).</p>
-<p><strong>Viewing Period</strong> — year range slider that controls the
-time window displayed on all plots. The model runs on the full selected
-period.</p>
-<p><strong>▶ Run Model</strong> — runs TOPMODEL with the current slider
-parameters and updates all plots.</p>
-<p><strong>⬇ Export Output (CSV)</strong> — downloads a CSV of all daily
-model outputs (discharge, ET, SWE, storage deficit, saturated fraction,
-and more).</p>
-<p><strong>⚡ Optimize (Nelder-Mead)</strong> — automatically calibrates
-parameters over the calibration window using the Nelder-Mead algorithm.
-Tries 3 starting points and keeps the best result. Updates the sliders
-and re-runs the model. Note: this is a local optimizer — results depend
-on starting values.</p>
-<p><strong>Spin-Up &amp; Calibration</strong> — set the number of
-spin-up days excluded from NSE scoring, and the calibration period used
-by the optimizer.</p>
+<div id="catchment" class="section level4">
+<h4>Catchment</h4>
+<p>Select <strong>HBEF Watershed 3 (default)</strong> to use the
+pre-loaded HBEF data, or <strong>Custom upload</strong> to run the model
+on a different catchment (see <a href="#custom-catchment-upload">Custom
+Catchment Upload</a>).</p>
 </div>
-<div id="parameter-groups" class="section level3">
-<h3>Parameter Groups</h3>
-<table>
+<div id="viewing-period" class="section level4">
+<h4>Viewing Period</h4>
+<p>Year range slider that controls the time window displayed on all
+plots. The x-axis of every plot is clipped to this window; the model
+itself runs on the full selected period.</p>
+</div>
+<div id="run-model" class="section level4">
+<h4>▶ Run Model</h4>
+<p>Runs TOPMODEL with the current slider values and refreshes all plots.
+The NSE score for both the calibration period and viewing window is
+displayed in the Model Output plot title.</p>
+</div>
+<div id="export-output-csv" class="section level4">
+<h4>⬇ Export Output (CSV)</h4>
+<p>Downloads a daily CSV of all model outputs. Columns:
+<code>date</code>, <code>P_mm</code>, <code>T_C</code>,
+<code>Qobs_mm</code>, <code>Qsim_mm</code>, <code>Qbaseflow_mm</code>,
+<code>Qsat_excess_mm</code>, <code>ET_mm</code>, <code>SWE_mm</code>,
+<code>Storage_Deficit_mm</code>, <code>Saturated_Fraction</code>.</p>
+</div>
+<div id="optimize-nelder-mead" class="section level4">
+<h4>⚡ Optimize (Nelder-Mead)</h4>
+<p>Calibrates model parameters over the selected calibration window.
+Tries three starting points; keeps the best result. Updates the sliders
+with the optimized values and re-runs the model automatically.</p>
+<blockquote>
+<p><strong>Note:</strong> Nelder-Mead is a local optimizer — results can
+vary depending on starting values and the length of the calibration
+period. Longer calibration periods (3–5 years) generally produce more
+stable results.</p>
+</blockquote>
+</div>
+<div id="parameter-groups" class="section level4">
+<h4>Parameter Groups</h4>
+<table style="width:100%;">
 <colgroup>
-<col width="33%" />
-<col width="33%" />
-<col width="33%" />
+<col width="14%" />
+<col width="14%" />
+<col width="14%" />
+<col width="14%" />
+<col width="14%" />
+<col width="14%" />
+<col width="14%" />
 </colgroup>
 <thead>
 <tr class="header">
 <th>Group</th>
-<th>Parameters</th>
-<th>What They Control</th>
+<th>Parameter</th>
+<th>Full Name</th>
+<th>Units</th>
+<th>Default</th>
+<th>Range</th>
+<th>Effect</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
 <td>Subsurface Flow</td>
-<td><code>ln(Te)</code>, <code>m</code>, <code>td</code></td>
-<td>Baseflow magnitude, drainage speed, and time delay</td>
+<td><code>ln(Te)</code></td>
+<td>Log Soil Transmissivity</td>
+<td>—</td>
+<td>1.9</td>
+<td>−7 to 5</td>
+<td>Controls baseflow magnitude; higher = more baseflow</td>
+</tr>
+<tr class="even">
+<td>Subsurface Flow</td>
+<td><code>m</code></td>
+<td>Transmissivity Decay with Depth</td>
+<td>mm</td>
+<td>19</td>
+<td>5–100</td>
+<td>Small = flashy response; large = slow recession</td>
+</tr>
+<tr class="odd">
+<td>Subsurface Flow</td>
+<td><code>td</code></td>
+<td>Unsaturated Zone Time Delay</td>
+<td>days</td>
+<td>3</td>
+<td>1–60</td>
+<td>Delays drainage to the water table</td>
 </tr>
 <tr class="even">
 <td>Root Zone &amp; ET</td>
 <td><code>Srmax</code></td>
-<td>Maximum soil moisture storage and evapotranspiration</td>
+<td>Maximum Root Zone Storage</td>
+<td>mm</td>
+<td>65</td>
+<td>5–300</td>
+<td>Controls ET; larger = more summer ET</td>
 </tr>
 <tr class="odd">
 <td>Snow</td>
-<td><code>Tmelt</code>, <code>Melt Factor</code></td>
-<td>Snow/rain threshold and degree-day melt rate</td>
+<td><code>Tmelt</code></td>
+<td>Snow/Rain Temperature Threshold</td>
+<td>°C</td>
+<td>−0.7</td>
+<td>−2 to 2</td>
+<td>Below this, precipitation falls as snow</td>
+</tr>
+<tr class="even">
+<td>Snow</td>
+<td><code>Melt Factor</code></td>
+<td>Degree-Day Melt Coefficient</td>
+<td>mm/°C/day</td>
+<td>3.4</td>
+<td>1–6</td>
+<td>Snowmelt per degree above Tmelt per day</td>
 </tr>
 </tbody>
 </table>
 </div>
-<div id="nse-score" class="section level3">
-<h3>NSE Score</h3>
-<p>The plot title reports NSE for both the <strong>calibration
-period</strong> and the current <strong>viewing window</strong>
-separately. NSE interpretation: ≥ 0.5 is generally considered
-acceptable, ≥ 0.7 is good, and 1.0 is a perfect fit.</p>
-</div>
-<div id="plot-tabs" class="section level3">
-<h3>Plot Tabs</h3>
-<table>
-<colgroup>
-<col width="50%" />
-<col width="50%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th>Tab</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><strong>Model Output</strong></td>
-<td>7-panel stacked time series: discharge, overland flow, baseflow, ET,
-SWE, storage deficit, and saturated area. X-axis is restricted to the
-viewing window.</td>
-</tr>
-<tr class="even">
-<td><strong>Input Data</strong></td>
-<td>3-panel plot of the raw forcing data: precipitation, air
-temperature, and observed discharge.</td>
-</tr>
-<tr class="odd">
-<td><strong>Observed vs Simulated</strong></td>
-<td>Scatter plot of observed vs. simulated discharge with a 1:1
-reference line.</td>
-</tr>
-<tr class="even">
-<td><strong>Flow Duration</strong></td>
-<td>Log-scale exceedance curve for observed and simulated flow.</td>
-</tr>
-<tr class="odd">
-<td><strong>TWI Map</strong></td>
-<td>Static map of the Topographic Wetness Index with watershed boundary
-and elevation contours.</td>
-</tr>
-<tr class="even">
-<td><strong>TWI Histogram</strong></td>
-<td>Distribution of TWI values with adjustable class count and summary
-statistics.</td>
-</tr>
-<tr class="odd">
-<td><strong>Saturation Map</strong></td>
-<td>Animated daily map of saturated vs. unsaturated cells. Use the
-slider or click on the discharge mini-plot to jump to any date.</td>
-</tr>
-<tr class="even">
-<td><strong>Custom Data Help</strong></td>
-<td>Instructions and R code for preparing custom catchment files.</td>
-</tr>
-</tbody>
-</table>
+<div id="spin-up-calibration" class="section level4">
+<h4>Spin-Up &amp; Calibration</h4>
+<ul>
+<li><strong>Spin-up (days):</strong> Days excluded from NSE computation
+while the model state stabilizes. Default 365 days. A one-year warm-up
+is recommended for most applications.</li>
+<li><strong>Calibration Years:</strong> The date window used by the
+Optimize button. Should overlap with a period of good data quality and
+represent the full range of hydrological conditions.</li>
+</ul>
 <hr />
 </div>
 </div>
-<div id="data-requirements" class="section level2">
-<h2>Data Requirements</h2>
-<p>All input files should be placed in the <code>Data/</code> directory
-(note: capital D to match the repository structure):</p>
+<div id="plot-tabs" class="section level3">
+<h3>Plot Tabs</h3>
+<div id="model-output" class="section level4">
+<h4>Model Output</h4>
+<p>Seven stacked time series panels sharing an x-axis, restricted to the
+viewing window:</p>
+<table>
+<thead>
+<tr class="header">
+<th>Panel</th>
+<th>Variable</th>
+<th>Color</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>Observed and simulated discharge</td>
+<td>Blue / Red</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>Saturation-excess overland flow</td>
+<td>Orange</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>Baseflow (subsurface)</td>
+<td>Purple</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>Actual evapotranspiration</td>
+<td>Green</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>Snow water equivalent</td>
+<td>Blue</td>
+</tr>
+<tr class="even">
+<td>6</td>
+<td>Watershed storage deficit</td>
+<td>Red</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>Saturated catchment fraction</td>
+<td>Dark blue</td>
+</tr>
+</tbody>
+</table>
+<p>The plot title reports NSE for both the calibration period and the
+viewing window.</p>
+</div>
+<div id="input-data" class="section level4">
+<h4>Input Data</h4>
+<p>Three panels showing the raw forcing data (precipitation, air
+temperature, observed discharge) for the viewing window — useful for
+diagnosing model performance relative to individual storm events or
+seasons.</p>
+</div>
+<div id="observed-vs-simulated" class="section level4">
+<h4>Observed vs Simulated</h4>
+<p>Scatter plot of daily observed vs. simulated discharge for all
+post-warm-up days in the viewing window. A dashed 1:1 line indicates a
+perfect model. Points clustered close to this line indicate good model
+skill across all flow magnitudes.</p>
+</div>
+<div id="flow-duration-curve" class="section level4">
+<h4>Flow Duration Curve</h4>
+<p>Log-scale exceedance probability plot. Shows how often each discharge
+magnitude is exceeded. A good model fit across both the high-exceedance
+(low flows) and low-exceedance (high flows) portions of the curve
+indicates skill at both baseflow recession and peak storm response.</p>
+</div>
+<div id="twi-map" class="section level4">
+<h4>TWI Map</h4>
+<p>Static map of the Topographic Wetness Index raster with watershed
+boundary and DEM elevation contours overlaid. The color scale (yellow →
+blue) shows where the landscape is topographically predisposed to
+accumulate water (high TWI = valley bottoms and concave slopes).</p>
+</div>
+<div id="twi-histogram" class="section level4">
+<h4>TWI Histogram</h4>
+<p>Distribution of TWI cell values across the watershed. The adjustable
+class slider (4–40 classes) allows inspection of the TWI distribution
+shape. Summary statistics (min, max, mean, median, SD, N, lambda) are
+displayed alongside the histogram.</p>
+</div>
+<div id="saturation-map" class="section level4">
+<h4>Saturation Map</h4>
+<p>Animated daily binary map showing saturated (blue) vs. unsaturated
+(tan) cells. For each day, cells with TWI ≥ (λ + Sd/m) are predicted to
+have their water table at or above the surface. Use the <strong>Day
+slider</strong> to step through time, or click <strong>▶</strong> to
+animate. <strong>Click any point on the discharge mini-plot</strong> to
+jump the map directly to that date.</p>
+<hr />
+</div>
+</div>
+<div id="custom-catchment-upload" class="section level3">
+<h3>Custom Catchment Upload</h3>
+<p>To run the model on a catchment other than HBEF W3, select
+<strong>Custom upload</strong> in the sidebar and provide:</p>
+<p><strong>Required:</strong> - <strong>Time series CSV</strong> —
+columns: <code>date</code> (YYYY-MM-DD), <code>precip_mm</code>,
+<code>tavg</code>, <code>flow_mm</code> - <strong>TOPIDX CSV</strong> —
+columns: <code>twi</code> (class midpoints), <code>area_frac</code>
+(area fractions summing to 1) - <strong>Latitude</strong> — decimal
+degrees</p>
+<p><strong>Optional (for spatial maps):</strong> - <strong>TWI matrix
+(.rds)</strong> — 2D numeric matrix with
+<code>attr(., &quot;extent&quot;) = c(xmin, xmax, ymin, ymax)</code>; max 250,000
+cells - <strong>DEM matrix (.rds)</strong> — same format, elevation
+values in metres - <strong>Watershed boundary (.rds)</strong> — 2-column
+matrix of polygon (x, y) coordinates</p>
+<p>R code to prepare these files from a local raster:</p>
+<pre class="r"><code>library(terra)
+twi &lt;- rast(&quot;twi.tif&quot;)
+twi_mat &lt;- as.matrix(twi, wide = TRUE)
+attr(twi_mat, &quot;extent&quot;) &lt;- c(xmin(twi), xmax(twi), ymin(twi), ymax(twi))
+saveRDS(twi_mat, &quot;twi_matrix.rds&quot;)
+
+vals &lt;- na.omit(values(twi))
+h &lt;- hist(vals, breaks = 30, plot = FALSE)
+topidx &lt;- data.frame(twi = h$mids, area_frac = h$counts / sum(h$counts))
+write.csv(topidx, &quot;topidx.csv&quot;, row.names = FALSE)</code></pre>
+<hr />
+</div>
+</div>
+<div id="libraries-package-versions" class="section level2">
+<h2>5. Libraries &amp; Package Versions</h2>
+<div id="app-dependencies-app.r" class="section level3">
+<h3>App Dependencies (<code>app.R</code>)</h3>
+<table>
+<thead>
+<tr class="header">
+<th>Package</th>
+<th>Version (tested)</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>shiny</code></td>
+<td>≥ 1.8.0</td>
+<td>Web application framework</td>
+</tr>
+<tr class="even">
+<td><code>bslib</code></td>
+<td>≥ 0.6.0</td>
+<td>Bootstrap 5 UI themes (<code>bs_theme</code>)</td>
+</tr>
+<tr class="odd">
+<td><code>plotly</code></td>
+<td>≥ 4.10.0</td>
+<td>Interactive plots and subplots</td>
+</tr>
+<tr class="even">
+<td><code>dplyr</code></td>
+<td>≥ 1.1.0</td>
+<td>Data wrangling (<code>group_by</code>, <code>summarise</code>)</td>
+</tr>
+<tr class="odd">
+<td><code>lubridate</code></td>
+<td>≥ 1.9.0</td>
+<td>Date handling (<code>yday</code>)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div id="precompute-dependencies-not-required-at-runtime" class="section level3">
+<h3>Precompute Dependencies (not required at runtime)</h3>
 <table>
 <colgroup>
-<col width="50%" />
-<col width="50%" />
+<col width="33%" />
+<col width="33%" />
+<col width="33%" />
 </colgroup>
 <thead>
 <tr class="header">
+<th>Package</th>
+<th>Version (tested)</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>terra</code></td>
+<td>≥ 1.7.0</td>
+<td>Raster/vector operations (<code>rast</code>, <code>mask</code>,
+<code>crop</code>, <code>ext</code>)</td>
+</tr>
+<tr class="even">
+<td><code>sf</code></td>
+<td>≥ 1.0.0</td>
+<td>Shapefile reading and CRS transformation</td>
+</tr>
+<tr class="odd">
+<td><code>whitebox</code></td>
+<td>≥ 2.3.0</td>
+<td>WhiteboxTools interface for DEM processing</td>
+</tr>
+<tr class="even">
+<td><code>raster</code></td>
+<td>≥ 3.6.0</td>
+<td>Legacy raster support (used only in
+<code>precompute_all.R</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>To check your installed versions:</p>
+<pre class="r"><code>packageVersion(&quot;shiny&quot;)
+packageVersion(&quot;terra&quot;)
+# etc.</code></pre>
+<blockquote>
+<p><strong>Note on spatial packages:</strong> <code>terra</code>,
+<code>sf</code>, and <code>raster</code> are <strong>not</strong> listed
+in the app’s <code>DESCRIPTION</code> or <code>rsconnect</code>
+dependencies. They are only needed to run the two precompute scripts
+locally. The deployed app reads only <code>.rds</code> files and
+requires none of these packages.</p>
+</blockquote>
+<hr />
+</div>
+</div>
+<div id="data-used-metadata" class="section level2">
+<h2>6. Data Used &amp; Metadata</h2>
+<div id="data-sources" class="section level3">
+<h3>Data Sources</h3>
+<p>All HBEF data are publicly available from the Hubbard Brook Ecosystem
+Study data repository and the Environmental Data Initiative (EDI).</p>
+<table>
+<colgroup>
+<col width="25%" />
+<col width="25%" />
+<col width="25%" />
+<col width="25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Dataset</th>
 <th>File</th>
+<th>Source</th>
+<th>Coverage</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Daily watershed precipitation</td>
+<td><code>DailyWatershed.csv</code></td>
+<td>HBEF Data Archive</td>
+<td>1956–2024</td>
+</tr>
+<tr class="even">
+<td>Daily streamflow</td>
+<td><code>HBEF_DailyStreamflow_1956-2024.csv</code></td>
+<td>HBEF Data Archive / EDI</td>
+<td>1956–2024</td>
+</tr>
+<tr class="odd">
+<td>Daily air temperature</td>
+<td><code>HBEF_air_temp_daily.csv</code></td>
+<td>HBEF Data Archive</td>
+<td>~1956–2024</td>
+</tr>
+<tr class="even">
+<td>Digital Elevation Model</td>
+<td><code>dem_10m.tif</code></td>
+<td>USGS National Elevation Dataset (NED)</td>
+<td>HBEF W3 extent</td>
+</tr>
+<tr class="odd">
+<td>Watershed boundary</td>
+<td><code>Watershed3HB.shp</code></td>
+<td>HBEF GIS Data Archive</td>
+<td>W3 polygon</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hubbard Brook Experimental Forest</strong> is located in the
+White Mountain National Forest, New Hampshire (43.94°N, 71.70°W).
+Watershed 3 is a 42.4-hectare forested headwater catchment with a mean
+elevation of approximately 620 m and a mean annual precipitation of
+~1400 mm (roughly 30% as snow).</p>
+<hr />
+</div>
+<div id="data-structure" class="section level3">
+<h3>Data Structure</h3>
+<div id="dailywatershed.csv" class="section level4">
+<h4><code>DailyWatershed.csv</code></h4>
+<p>Daily precipitation totals for all HBEF watersheds.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Column</th>
+<th>Type</th>
+<th>Units</th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><code>dem_10m.tif</code></td>
-<td>10-meter resolution Digital Elevation Model for HBEF W3</td>
+<td><code>DATE</code></td>
+<td>Date</td>
+<td>YYYY-MM-DD</td>
+<td>Measurement date</td>
 </tr>
 <tr class="even">
-<td><code>Watershed3HB.shp</code></td>
-<td>Watershed 3 boundary polygon (+ <code>.dbf</code>,
-<code>.prj</code>, <code>.shx</code>)</td>
+<td><code>watershed</code></td>
+<td>Character</td>
+<td>—</td>
+<td>Watershed ID (e.g., <code>W3</code>)</td>
 </tr>
 <tr class="odd">
-<td><code>DailyWatershed.csv</code></td>
-<td>Daily precipitation — must include <code>DATE</code> and
-<code>watershed</code> columns; filtered to <code>W3</code></td>
-</tr>
-<tr class="even">
-<td><code>HBEF_DailyStreamflow_1956-2024.csv</code></td>
-<td>Daily streamflow — must include <code>DATE</code>, <code>WS</code>,
-and <code>Streamflow</code> columns; filtered to
-<code>WS == 3</code></td>
-</tr>
-<tr class="odd">
-<td><code>HBEF_air_temp_daily.csv</code></td>
-<td>Daily air temperature — must include <code>date</code>,
-<code>STA</code>, and <code>AVE</code> columns; stations
-<code>STA14</code> and <code>STA17</code> are used</td>
-</tr>
-<tr class="even">
-<td><code>twi_precomputed.tif</code></td>
-<td><strong>Produced by <code>precompute_twi.R</code></strong></td>
-</tr>
-<tr class="odd">
-<td><code>twi_matrix.rds</code></td>
-<td><strong>Produced by <code>precompute_all.R</code></strong></td>
-</tr>
-<tr class="even">
-<td><code>twi_extent.rds</code></td>
-<td><strong>Produced by <code>precompute_all.R</code></strong></td>
-</tr>
-<tr class="odd">
-<td><code>dem_matrix.rds</code></td>
-<td><strong>Produced by <code>precompute_all.R</code></strong></td>
-</tr>
-<tr class="even">
-<td><code>dem_extent.rds</code></td>
-<td><strong>Produced by <code>precompute_all.R</code></strong></td>
-</tr>
-<tr class="odd">
-<td><code>ws_boundary.rds</code></td>
-<td><strong>Produced by <code>precompute_all.R</code></strong></td>
-</tr>
-<tr class="even">
-<td><code>topidx.rds</code></td>
-<td><strong>Produced by <code>precompute_all.R</code></strong></td>
-</tr>
-<tr class="odd">
-<td><code>twi_lam.rds</code></td>
-<td><strong>Produced by <code>precompute_all.R</code></strong></td>
+<td><code>Precip</code></td>
+<td>Numeric</td>
+<td>mm</td>
+<td>Total daily precipitation</td>
 </tr>
 </tbody>
 </table>
+<p>The app filters to <code>watershed == &quot;W3&quot;</code>.</p>
+</div>
+<div id="hbef_dailystreamflow_1956-2024.csv" class="section level4">
+<h4><code>HBEF_DailyStreamflow_1956-2024.csv</code></h4>
+<p>Daily streamflow for all HBEF watersheds.</p>
+<table>
+<colgroup>
+<col width="25%" />
+<col width="25%" />
+<col width="25%" />
+<col width="25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Column</th>
+<th>Type</th>
+<th>Units</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>DATE</code></td>
+<td>Date</td>
+<td>YYYY-MM-DD</td>
+<td>Measurement date</td>
+</tr>
+<tr class="even">
+<td><code>WS</code></td>
+<td>Integer</td>
+<td>—</td>
+<td>Watershed number (app uses <code>WS == 3</code>)</td>
+</tr>
+<tr class="odd">
+<td><code>Streamflow</code></td>
+<td>Numeric</td>
+<td>mm</td>
+<td>Daily mean streamflow, expressed as mm over watershed area</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div id="hbef_air_temp_daily.csv" class="section level4">
+<h4><code>HBEF_air_temp_daily.csv</code></h4>
+<p>Daily air temperature from multiple HBEF meteorological stations.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Column</th>
+<th>Type</th>
+<th>Units</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>date</code></td>
+<td>Date</td>
+<td>YYYY-MM-DD</td>
+<td>Measurement date</td>
+</tr>
+<tr class="even">
+<td><code>STA</code></td>
+<td>Character</td>
+<td>—</td>
+<td>Station ID</td>
+</tr>
+<tr class="odd">
+<td><code>AVE</code></td>
+<td>Numeric</td>
+<td>°C</td>
+<td>Daily average temperature</td>
+</tr>
+</tbody>
+</table>
+<p>The app uses stations <code>STA14</code> and <code>STA17</code> only
+and averages across them for each day.</p>
+</div>
+<div id="dem_10m.tif" class="section level4">
+<h4><code>dem_10m.tif</code></h4>
+<p>10-meter resolution Digital Elevation Model in GeoTIFF format,
+projected in a UTM coordinate reference system. Covers the full extent
+of HBEF Watershed 3 with a boundary buffer. Elevation values are in
+metres above sea level.</p>
+</div>
+<div id="watershed3hb.shp" class="section level4">
+<h4><code>Watershed3HB.shp</code></h4>
+<p>Polygon shapefile of the Watershed 3 boundary. Used to clip the DEM
+and TWI rasters and to draw the watershed outline on spatial maps.</p>
+<hr />
+</div>
+</div>
+<div id="preprocessing" class="section level3">
+<h3>Preprocessing</h3>
+<div id="precipitation" class="section level4">
+<h4>Precipitation</h4>
+<p>No gap-filling is applied. Remaining <code>NA</code> values are
+replaced with <code>0</code> (conservative assumption: no data = no
+precipitation).</p>
+</div>
+<div id="streamflow" class="section level4">
+<h4>Streamflow</h4>
+<p>Missing daily values (<code>NA</code>) are retained and excluded from
+NSE computation. The model is run on all days regardless of whether
+observed flow is available.</p>
+</div>
+<div id="air-temperature" class="section level4">
+<h4>Air Temperature</h4>
+<p>Missing values are linearly interpolated between valid observations
+using <code>approx()</code> with <code>rule = 2</code> (flat
+extrapolation at the edges). This is necessary because Hamon PET
+requires a complete temperature record.</p>
+</div>
+<div id="twi-computation-precompute_twi.r" class="section level4">
+<h4>TWI Computation (<code>precompute_twi.R</code>)</h4>
+<ol style="list-style-type: decimal">
+<li>The raw DEM is clipped and masked to the Watershed 3 boundary</li>
+<li>Depressions in the DEM are breached using
+<code>wbt_breach_depressions_least_cost()</code> with a maximum breach
+distance of 10 cells — this removes artificial sinks while preserving
+true depressions</li>
+<li>FD8 (D-infinity multi-flow) accumulation is computed as specific
+contributing area (m²/m)</li>
+<li>Slope is computed in degrees</li>
+<li>TWI = ln(SCA / tan(β)), where SCA is specific contributing area and
+β is slope. A minimum tan(β) of 0.001 is enforced to prevent infinite
+TWI values on flat cells</li>
+<li>The TWI raster is masked back to the watershed boundary</li>
+</ol>
+</div>
+<div id="topidx-construction-precompute_all.r" class="section level4">
+<h4>TOPIDX Construction (<code>precompute_all.R</code>)</h4>
+<p>The TWI raster is binned into 16 histogram classes. The area fraction
+in each class is computed as
+<code>cell count / total non-NA cells</code>. The 16-class resolution
+matches the classic TOPMODEL parameterization (Beven &amp; Kirkby, 1979)
+and provides sufficient resolution for the relatively small HBEF W3
+watershed.</p>
+<hr />
+</div>
+</div>
+</div>
+<div id="project-structure" class="section level2">
+<h2>7. Project Structure</h2>
+<pre><code>project/
+├── app.R                    # Main Shiny application (model + UI + server)
+├── precompute_twi.R         # Step 1: compute TWI via WhiteboxTools (run once)
+├── precompute_all.R         # Step 2: convert spatial data to .rds (run once)
+├── README.md                # This file
+└── Data/
+    │
+    ├── ── Raw inputs (checked into repository) ──────────────────────────────
+    ├── dem_10m.tif                          # 10m DEM (USGS NED)
+    ├── Watershed3HB.shp                     # Watershed boundary
+    ├── Watershed3HB.dbf                     # Shapefile attribute table
+    ├── Watershed3HB.prj                     # Shapefile projection
+    ├── Watershed3HB.shx                     # Shapefile index
+    ├── DailyWatershed.csv                   # Daily precipitation (all watersheds)
+    ├── HBEF_DailyStreamflow_1956-2024.csv   # Daily streamflow (all watersheds)
+    ├── HBEF_air_temp_daily.csv              # Daily air temperature
+    │
+    └── ── Generated by precompute scripts (not committed to repository) ─────
+        ├── twi_precomputed.tif              # TWI raster (from precompute_twi.R)
+        ├── twi_matrix.rds                   # TWI as 2D matrix
+        ├── twi_extent.rds                   # TWI spatial extent vector
+        ├── dem_matrix.rds                   # DEM as 2D matrix (clipped)
+        ├── dem_extent.rds                   # DEM spatial extent vector
+        ├── ws_boundary.rds                  # Watershed polygon vertices
+        ├── topidx.rds                       # TOPIDX class table (16 x 2)
+        └── twi_lam.rds                      # Mean TWI scalar (lambda)</code></pre>
+<blockquote>
+<p><strong>Git note:</strong> The generated <code>.rds</code> and
+<code>.tif</code> files should be added to <code>.gitignore</code>.
+Collaborators clone the repo and run the two precompute scripts to
+regenerate them locally before launching the app.</p>
+</blockquote>
+<hr />
+</div>
+<div id="known-issues" class="section level2">
+<h2>8. Known Issues</h2>
+<p><strong>Optimizer sensitivity to calibration period length.</strong>
+The Nelder-Mead optimizer is a local search method and can converge to
+different local optima depending on the selected calibration window.
+Short windows (&lt; 2 years) are particularly prone to overfitting.
+Using a 3–5 year calibration period that spans wet and dry years is
+recommended. The app tries three starting points as a partial
+mitigation, but a global search (e.g., Monte Carlo sampling) would be
+more robust.</p>
+<p><strong>Snow model limitations.</strong> The degree-day snow model is
+a simplification. It uses a single melt factor and temperature threshold
+applied uniformly across the watershed, ignoring elevation gradients and
+aspect effects. In a watershed with significant topographic relief,
+actual snowmelt timing can differ substantially from the model’s
+predictions, particularly in spring.</p>
+<p><strong>Single temperature station.</strong> The app averages across
+two HBEF meteorological stations (STA14, STA17). Spatial variability in
+temperature across the watershed — important for snow accumulation and
+melt — is not captured.</p>
+<p><strong>No routing.</strong> TOPMODEL assumes instantaneous routing
+of generated runoff to the watershed outlet. In larger catchments or
+those with long channel networks, travel time effects could introduce
+lag between modeled and observed peak flows that TOPMODEL cannot
+reproduce.</p>
+<p><strong>ET is limited by Hamon PET.</strong> The Hamon equation is a
+simple temperature-based PET method. It does not account for vapor
+pressure deficit, wind speed, or net radiation, which are the primary
+drivers of actual evapotranspiration at daily timescales. This limits
+model accuracy during periods where energy supply (not water supply)
+limits ET.</p>
+<p><strong>Custom catchments: no spatial maps if extent attribute is
+missing.</strong> If a user uploads a TWI matrix <code>.rds</code> file
+without an <code>attr(., &quot;extent&quot;)</code> attribute, the app skips
+spatial maps and shows a placeholder message. The time series model
+still runs correctly.</p>
+<p><strong>ShinyApps.io memory limits.</strong> Large custom catchments
+(&gt; 250,000 TWI cells) are blocked by the app to prevent memory issues
+on the free shinyapps.io tier. This limit can be adjusted in
+<code>app.R</code> by changing the <code>CELL_LIMIT</code> constant.</p>
+<hr />
+</div>
+<div id="future-features" class="section level2">
+<h2>9. Future Features</h2>
+<div id="additional-catchments" class="section level3">
+<h3>Additional Catchments</h3>
+<ul>
+<li><strong>Multi-watershed support:</strong> Add a dropdown to switch
+between all nine HBEF watersheds (W1–W9) using pre-computed
+<code>.rds</code> files for each, enabling paired watershed comparisons
+(e.g., logged vs. reference).</li>
+<li><strong>Larger catchment support:</strong> Implement catchment
+aggregation or raster resampling so that larger DEM extents can be used
+without exceeding memory limits.</li>
+<li><strong>Automated TOPIDX generation:</strong> Add a built-in
+workflow inside the app (or a companion script) that computes TWI and
+TOPIDX from a user-uploaded raw DEM, removing the need for users to run
+WhiteboxTools separately.</li>
+</ul>
+</div>
+<div id="model-parameters-physics" class="section level3">
+<h3>Model Parameters &amp; Physics</h3>
+<ul>
+<li><strong>Calibrate <code>qs0</code> (initial subsurface
+flow):</strong> The current version derives the initial saturation
+deficit from the first observed flow value. Exposing <code>qs0</code> as
+an optimizable parameter would give more control over the warm-up
+state.</li>
+<li><strong>Spatial ET heterogeneity:</strong> Allow <code>Srmax</code>
+to vary by land cover class (e.g., using a simple forest/non-forest
+mask), which would improve ET simulation in partially disturbed
+catchments.</li>
+<li><strong>Improved snow model:</strong> Implement a simple
+energy-balance snow model or an elevation-banded degree-day model to
+better capture the spatial pattern of snowmelt across watersheds with
+significant topographic relief.</li>
+<li><strong>Uncertainty quantification:</strong> Add Monte Carlo or GLUE
+(Generalized Likelihood Uncertainty Estimation) sampling to produce
+ensemble predictions and visualize parameter uncertainty rather than a
+single best-fit solution.</li>
+<li><strong>Multi-objective calibration:</strong> Currently NSE is the
+only calibration metric. Adding log-NSE (which weights low flows more
+heavily) or a composite objective function would allow users to
+calibrate for different flow regimes.</li>
+</ul>
+<hr />
+</div>
+</div>
+<div id="references-resources" class="section level2">
+<h2>10. References &amp; Resources</h2>
+<div id="topmodel" class="section level3">
+<h3>TOPMODEL</h3>
+<p>Beven, K.J., &amp; Kirkby, M.J. (1979). A physically based, variable
+contributing area model of basin hydrology. <em>Hydrological Sciences
+Bulletin</em>, 24(1), 43–69. <a href="https://doi.org/10.1080/02626667909491834" class="uri">https://doi.org/10.1080/02626667909491834</a></p>
+<p>Beven, K.J. (2012). <em>Rainfall-Runoff Modelling: The Primer</em>
+(2nd ed.). Wiley-Blackwell. — Comprehensive textbook covering TOPMODEL
+theory and implementation.</p>
+<p>Beven, K.J., Lamb, R., Quinn, P., Romanowicz, R., &amp; Freer, J.
+(1995). TOPMODEL. In V.P. Singh (Ed.), <em>Computer Models of Watershed
+Hydrology</em> (pp. 627–668). Water Resources Publications. — Original
+TOPMODEL implementation reference.</p>
+</div>
+<div id="hubbard-brook-experimental-forest" class="section level3">
+<h3>Hubbard Brook Experimental Forest</h3>
+<p>Likens, G.E. (Ed.) (2013). <em>Biogeochemistry of a Forested
+Ecosystem</em> (3rd ed.). Springer. — Foundational reference for HBEF
+ecosystem science.</p>
+<p>Hubbard Brook Ecosystem Study. (2024). <em>Hubbard Brook Experimental
+Forest: Long-Term Ecological Research</em>. <a href="https://hubbardbrook.org" class="uri">https://hubbardbrook.org</a>
+— Data portal and site description.</p>
+<p>Campbell, J.L., Driscoll, C.T., Pourmokhtarian, A., &amp; Hayhoe, K.
+(2011). Streamflow responses to past and projected future changes in
+climate at the Hubbard Brook Experimental Forest, New Hampshire, United
+States. <em>Water Resources Research</em>, 47, W02514.</p>
+</div>
+<div id="topographic-wetness-index-whiteboxtools" class="section level3">
+<h3>Topographic Wetness Index &amp; WhiteboxTools</h3>
+<p>Quinn, P., Beven, K., Chevallier, P., &amp; Planchon, O. (1991). The
+prediction of hillslope flow paths for distributed hydrological
+modelling using digital terrain models. <em>Hydrological Processes</em>,
+5(1), 59–79.</p>
+<p>Lindsay, J.B. (2016). Whitebox GAT: A case study in geomorphometric
+analysis. <em>Computers &amp; Geosciences</em>, 95, 75–84. <a href="https://doi.org/10.1016/j.cageo.2016.07.003" class="uri">https://doi.org/10.1016/j.cageo.2016.07.003</a></p>
+<p>Wu, Q. (2020). <em>whitebox: WhiteboxTools R Frontend</em>. R package
+version 2.x. <a href="https://cran.r-project.org/package=whitebox" class="uri">https://cran.r-project.org/package=whitebox</a></p>
+</div>
+<div id="evapotranspiration" class="section level3">
+<h3>Evapotranspiration</h3>
+<p>Hamon, W.R. (1961). Estimating potential evapotranspiration.
+<em>Journal of the Hydraulics Division</em>, 87(3), 107–120.</p>
+</div>
+<div id="model-evaluation" class="section level3">
+<h3>Model Evaluation</h3>
+<p>Nash, J.E., &amp; Sutcliffe, J.V. (1970). River flow forecasting
+through conceptual models part I — A discussion of principles.
+<em>Journal of Hydrology</em>, 10(3), 282–290. <a href="https://doi.org/10.1016/0022-1694(70)90255-6" class="uri">https://doi.org/10.1016/0022-1694(70)90255-6</a> — Original
+paper defining the Nash-Sutcliffe Efficiency (NSE) criterion used
+throughout this app.</p>
+<p>Moriasi, D.N., Arnold, J.G., Van Liew, M.W., Bingner, R.L., Harmel,
+R.D., &amp; Veith, T.L. (2007). Model evaluation guidelines for
+systematic quantification of accuracy in watershed simulations.
+<em>Transactions of the ASABE</em>, 50(3), 885–900. — Standard reference
+for interpreting NSE thresholds (≥ 0.5 satisfactory, ≥ 0.65 good, ≥ 0.75
+very good).</p>
+</div>
+<div id="r-packages-tools" class="section level3">
+<h3>R Packages &amp; Tools</h3>
+<p>Chang, W., Cheng, J., Allaire, J.J., Sievert, C., Schloerke, B., Xie,
+Y., Allen, J., McPherson, J., Dipert, A., &amp; Borges, B. (2024).
+<em>shiny: Web Application Framework for R</em>. R package version
+1.8.x. <a href="https://cran.r-project.org/package=shiny" class="uri">https://cran.r-project.org/package=shiny</a></p>
+<p>Sievert, C. (2020). <em>Interactive Web-Based Data Visualization with
+R, plotly, and shiny</em>. Chapman and Hall/CRC. <a href="https://plotly-r.com" class="uri">https://plotly-r.com</a></p>
+<p>Hijmans, R.J. (2024). <em>terra: Spatial Data Analysis</em>. R
+package version 1.7.x. <a href="https://cran.r-project.org/package=terra" class="uri">https://cran.r-project.org/package=terra</a></p>
+<p>Pebesma, E. (2018). Simple features for R: Standardized support for
+spatial vector data. <em>The R Journal</em>, 10(1), 439–446. <a href="https://doi.org/10.32614/RJ-2018-009" class="uri">https://doi.org/10.32614/RJ-2018-009</a></p>
+</div>
+<div id="additional-reading" class="section level3">
+<h3>Additional Reading</h3>
+<p>Beven, K.J. (2001). How far can we go in distributed hydrological
+modelling? <em>Hydrology and Earth System Sciences</em>, 5(1), 1–12. —
+Discusses the limits of spatial complexity in watershed models.</p>
+<p>Seibert, J., &amp; McGlynn, B.L. (2007). A new triangular multiple
+flow direction algorithm for computing upslope areas from gridded
+digital elevation models. <em>Water Resources Research</em>, 43, W04501.
+— Background on multi-directional flow accumulation methods (FD8) used
+in TWI computation.</p>
+</div>
 </div>
 </div>
 
