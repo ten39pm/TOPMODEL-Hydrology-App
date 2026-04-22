@@ -85,9 +85,9 @@ load_hbef_data <- function() {
   # Restrict to the 2 primary HBEF stations
   temp <- temp[temp$STA %in% c("STA14", "STA17"), ]
   
-  temp_avg <- temp %>%
-    group_by(date) %>%
-    summarise(tavg = mean(AVE, na.rm = TRUE), .groups = "drop") %>%
+  temp_avg <- temp |>
+    group_by(date) |>
+    summarise(tavg = mean(AVE, na.rm = TRUE), .groups = "drop") |>
     filter(!is.na(tavg) & is.finite(tavg))
   
   # ── Merge & clean ─────────────────────────────────────────────────────────────
