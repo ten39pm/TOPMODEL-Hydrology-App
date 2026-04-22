@@ -37,41 +37,30 @@ editor_options:
 ## 1. Introduction & Motivation
 
 Hydrological models are fundamental tools in environmental science,
-enabling researchers and land managers to understand how precipitation
-moves through a watershed — as streamflow, groundwater recharge,
-evapotranspiration, and soil storage. However, most operational
-hydrological models are implemented in static scripts or proprietary
-software, making them inaccessible to non-specialists and difficult to
-use interactively for exploration and education.
+allowing researchers to analyze and understand how precipitation moves
+through a watershed. However, most hydrological models are difficult to
+use interactively in an introductory setting. This complexity makes it
+difficult for students and individuals new to hydrology to properly
+interpret what they are seeing.
 
 This project addresses that gap by wrapping **TOPMODEL** (Beven &
-Kirkby, 1979) — one of the most widely taught and used conceptual
-rainfall-runoff models — in an interactive Shiny web application. The
+Kirkby, 1979), one of the most widely taught and used conceptual
+rainfall-runoff models into an interactive Shiny web application. The
 app is built around **Watershed 3 (W3) of the Hubbard Brook Experimental
-Forest (HBEF)** in the White Mountains of New Hampshire, one of the
-longest-running and most thoroughly documented small watershed research
-sites in North America. HBEF has been continuously monitored since 1955,
-providing over 60 years of daily precipitation, streamflow, and air
-temperature records that make it ideal for hydrological model
+Forest (HBEF)** in New Hampshire. HBEF has been continuously monitored
+since 1955, providing over 60 years of daily precipitation, streamflow,
+and air temperature records that make it ideal for hydrological model
 calibration and validation.
 
-**Why TOPMODEL?** TOPMODEL is a semi-distributed, physically-based model
-that predicts streamflow by linking the watershed's topographic
-structure — specifically the Topographic Wetness Index (TWI) — to
-spatial patterns of soil moisture and saturation. Unlike lumped models,
-TOPMODEL produces spatially explicit predictions of which areas of the
-landscape are saturated on any given day, making it well-suited for
-visualizing hydrological processes rather than just fitting discharge
-curves.
-
-**Why an interactive app?** Interactive parameter exploration allows
-users to develop an intuitive understanding of how each model parameter
-controls the shape of the hydrograph — something that is difficult to
-convey through static figures or tables. The optimizer further
-accelerates learning by automatically finding parameter combinations
-that maximize model skill (Nash-Sutcliffe Efficiency), freeing users to
-focus on interpreting results rather than manual trial-and-error
-calibration.
+The purpose of this project is to create a simplified educational
+hydrology model that allows educators and students to be able to not
+only experiment with data, but also to see a visualized model of how
+streamflow is affected by key variables such as air temperature,
+elevation, and precipitation later extended to snowfall. This model
+calculates wetness and saturation by the Topographic Wetness Index (TWI)
+and assigns moisture and storage deficits. This project will be the
+framework for later extensions, but should have methods to easily add
+new parameters and watersheds.
 
 The app supports both the default HBEF dataset and user-uploaded custom
 catchments, making it a generalizable teaching and research tool beyond
@@ -84,7 +73,7 @@ the specific HBEF context.
 The app is built with **R Shiny** and consists of three scripts:
 
 | Script | Purpose | When to run |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | `precompute_twi.R` | Computes TWI from the raw DEM using WhiteboxTools | Once, before first use |
 | `precompute_all.R` | Converts spatial outputs to `.rds` files for the app | Once, after `precompute_twi.R` |
 | `app.R` | The main Shiny application | Every session |
@@ -369,7 +358,7 @@ the optimized values and re-runs the model automatically.
 #### Parameter Groups
 
 | Group | Parameter | Full Name | Units | Default | Range | Effect |
-|-----------|-----------|-----------|-----------|-----------|-----------|-----------|
+|----|----|----|----|----|----|----|
 | Subsurface Flow | `ln(Te)` | Log Soil Transmissivity | — | 1.9 | −7 to 5 | Controls baseflow magnitude; higher = more baseflow |
 | Subsurface Flow | `m` | Transmissivity Decay with Depth | mm | 19 | 5–100 | Small = flashy response; large = slow recession |
 | Subsurface Flow | `td` | Unsaturated Zone Time Delay | days | 3 | 1–60 | Delays drainage to the water table |
@@ -501,7 +490,7 @@ write.csv(topidx, "topidx.csv", row.names = FALSE)
 ### Precompute Dependencies (not required at runtime)
 
 | Package | Version (tested) | Purpose |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | `terra` | ≥ 1.7.0 | Raster/vector operations (`rast`, `mask`, `crop`, `ext`) |
 | `sf` | ≥ 1.0.0 | Shapefile reading and CRS transformation |
 | `whitebox` | ≥ 2.3.0 | WhiteboxTools interface for DEM processing |
@@ -531,7 +520,7 @@ All HBEF data are publicly available from the Hubbard Brook Ecosystem
 Study data repository and the Environmental Data Initiative (EDI).
 
 | Dataset | File | Source | Coverage |
-|------------------|------------------|------------------|------------------|
+|----|----|----|----|
 | Daily watershed precipitation | `DailyWatershed.csv` | HBEF Data Archive | 1956–2024 |
 | Daily streamflow | `HBEF_DailyStreamflow_1956-2024.csv` | HBEF Data Archive / EDI | 1956–2024 |
 | Daily air temperature | `HBEF_air_temp_daily.csv` | HBEF Data Archive | \~1956–2024 |
@@ -565,7 +554,7 @@ The app filters to `watershed == "W3"`.
 Daily streamflow for all HBEF watersheds.
 
 | Column | Type | Units | Description |
-|------------------|------------------|------------------|------------------|
+|----|----|----|----|
 | `DATE` | Date | YYYY-MM-DD | Measurement date |
 | `WS` | Integer | — | Watershed number (app uses `WS == 3`) |
 | `Streamflow` | Numeric | mm | Daily mean streamflow, expressed as mm over watershed area |
@@ -852,6 +841,10 @@ spatial vector data. *The R Journal*, 10(1), 439–446.
 Beven, K.J. (2001). How far can we go in distributed hydrological
 modelling? *Hydrology and Earth System Sciences*, 5(1), 1–12. —
 Discusses the limits of spatial complexity in watershed models.
+
+Beven, K.J, & Wood, E.F. (1983). Catchment geomorphology and the
+dynamics of runoff contributing areas. *Journal of Hydrology*, 65(1-3),
+139-158. - Explores variable source area concepts in hydrology.
 
 Seibert, J., & McGlynn, B.L. (2007). A new triangular multiple flow
 direction algorithm for computing upslope areas from gridded digital
